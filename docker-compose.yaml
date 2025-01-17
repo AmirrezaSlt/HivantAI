@@ -1,0 +1,26 @@
+services:
+  agent:
+    build: .
+    # command: python main.py
+    command: sleep infinity
+    stdin_open: true
+    tty: true
+    container_name: agent
+    volumes:
+      - ./agent:/llm/agent
+      - ./providers:/llm/providers
+      - ~/.kube/config:/root/.kube/config
+      - ./main.py:/llm/main.py # FOR TESTING
+    depends_on:
+      - vector-db
+
+  vector-db:
+    image: qdrant/qdrant
+    container_name: vector-db
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - ./qdrant_data:/qdrant/storage
