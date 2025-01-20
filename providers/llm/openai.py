@@ -1,9 +1,9 @@
 import os
 from typing import Optional, List
 import requests
-from agent.chat import BaseChatProvider
+from agent.llm import BaseLLMProvider
 
-class OpenAIChatProvider(BaseChatProvider):
+class OpenAILLMProvider(BaseLLMProvider):
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4"):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
@@ -13,7 +13,7 @@ class OpenAIChatProvider(BaseChatProvider):
             "Authorization": f"Bearer {self.api_key}"
         }
 
-    def send_message(self, messages: List[dict], max_tokens: int, temperature: float) -> Optional[str]:
+    def generate_response(self, messages: List[dict], max_tokens: int, temperature: float) -> Optional[str]:
         payload = {
             "model": self.model,
             "messages": messages,
