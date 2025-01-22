@@ -16,6 +16,10 @@ class Agent:
     def setup(self):
         if self.retriever:
             self.retriever.setup()
+    
+    def load_data_to_vector_db(self):
+        if self.retriever:
+            self.retriever.load_data_to_vector_db()
       
     def respond(self, user_message: str) -> str:
         relevant_documents = self.retriever.query_and_retrieve(query=user_message) if self.retriever else None

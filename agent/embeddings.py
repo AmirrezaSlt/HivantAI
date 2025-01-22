@@ -1,27 +1,15 @@
-import logging
 from abc import ABC, abstractmethod
 from typing import Optional, List
 
 class BaseEmbeddingProvider(ABC):
-    dimension: int = None
-    
-    def __init__(self):
+    def __init__(self, dimension: int):
         """
-        Initializes the embedding provider with a fixed dimension.
+        Initializes the embedding provider.
 
         Args:
-            dimension (int): The fixed dimension of the embeddings.
+            dimension (int): The size of the embedding vectors this provider produces
         """
-        if not self.dimension:
-            logging.info("Dimension not set, setting dimension from sample")
-            self.set_dimension_from_sample()
-    
-    def set_dimension_from_sample(self):
-        """
-        Sets the dimension from a sample embedding.
-        """
-        embedding = self.embed_text("sample text")
-        self.dimension = len(embedding)
+        self.dimension = dimension
 
     @abstractmethod
     def embed_text(self, text: str) -> Optional[List[float]]:

@@ -32,8 +32,7 @@ context_prompt_template = """
     {% if relevant_documents %}
     Try to use the following documents to answer the user's question:
     {% for document in relevant_documents %}
-    - {{ document.title }}
-    - {{ document.get_content() }}
+    - {{ document.id }}: {{ document.get_data() }}
     {% endfor %}
     {% endif %}
 

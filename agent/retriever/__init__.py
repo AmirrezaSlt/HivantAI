@@ -1,32 +1,38 @@
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from ..config import Config
-from .models import RelevantDocuments, RelevantDocument
 
 class Retriever:
     def __init__(self, config: Config):
         self.config = config.RETRIEVER
-        self.embedding_provider = self.config.EMBEDDING_PROVIDER(**self.config.EMBEDDING_PROVIDER_KWARGS)
-        self.vector_db = self.config.VECTOR_DB(**self.config.VECTOR_DB_KWARGS)
-        self.data_sources = self.config.DATA_SOURCES
+        self.embedding_provider = self.config.EMBEDDING_PROVIDER
+        self.vector_db = self.config.VECTOR_DB
+        self.reference_documents = {}
+        for doc in self.config.REFERENCE_DOCUMENTS:
+            self.reference_documents[doc.id] = doc
 
     def setup(self):
         """
         Sets up the vector database and embeds the provided content sources.
         """
-        self.vector_db.setup(self.embedding_provider.dimension)
+        self.vector_db.setup()
 
     def load_data_to_vector_db(self):
         vectors = []
-        for name, data_source in self.data_sources.items():
-            content = data_source.get_content()
+        for reference_document in self.reference_documents:
+            content = reference_document.get_data()
             embedding = self.embedding_provider.embed_text(content)
             if embedding:
-                metadata = {'source': name}
+                metadata = reference_document.get_metadata()
+                metadata.update({'source': reference_document.id})
                 vectors.append((embedding, metadata))
-        self.vector_db.add_vectors(vectors)
-        logging.info(f"Stored embeddings for {len(vectors)} items")
-        return len(vectors)
+        if vectors:
+            self.vector_db.add_vectors(vectors)
+            logging.info(f"Stored embeddings for {len(vectors)} items")
+            return len(vectors)
+        else:
+            logging.error("No vectors to store")
+            return 0
 
     def query_and_retrieve(self, query: str) -> List[Dict[str, Any]]:
         """
@@ -37,6 +43,6 @@ class Retriever:
             logging.error("Failed to generate embedding for the query.")
             return []
 
-        results = self.vector_db.query_vectors(query_embedding, self.config.NUM_RELEVANT_DOCUMENTS)
-        data_sources = [self.data_sources[res['source']] for res in results]
-        return data_sources
+        results = self.vector_db.find_similar(query_embedding, self.config.NUM_RELEVANT_DOCUMENTS)
+        relevant_documents = [self.reference_documents[res['source']] for res in results]
+        return relevant_documents

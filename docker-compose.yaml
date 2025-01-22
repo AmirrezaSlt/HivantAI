@@ -6,6 +6,8 @@ services:
     stdin_open: true
     tty: true
     container_name: agent
+    env_file:
+      - .env
     volumes:
       - ./agent:/llm/agent
       - ./providers:/llm/providers

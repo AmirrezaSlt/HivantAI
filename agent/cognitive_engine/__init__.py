@@ -34,7 +34,7 @@ class CognitiveEngine:
             relevant_documents: List[Dict[str, Any]], 
             tools: List[BaseTool]
         ) -> str:
-
+        
         while True:
             rendered_system_prompt = Template(self.system_prompt).render(
                 tools=tools,
