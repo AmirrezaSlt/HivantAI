@@ -1,7 +1,7 @@
 from typing import Type, Dict, Any
 from pydantic import BaseModel, Field
 from kubernetes import client
-from agent.tools import BaseTool
+from agent.toolkit.tool import BaseTool
 from ..connections.kubernetes import KubernetesConnection
 
 class KubernetesPodInputs(BaseModel):
@@ -9,7 +9,8 @@ class KubernetesPodInputs(BaseModel):
     namespace: str = Field(..., description="The namespace of the pod")
 
 class KubernetesPodTool(BaseTool):
-    def __init__(self, kubernetes_connection: KubernetesConnection):
+    def __init__(self, kubernetes_connection: KubernetesConnection, id: str):
+        super().__init__(id=id)
         self.connection: KubernetesConnection = kubernetes_connection
         self.core_v1_api: client.CoreV1Api = client.CoreV1Api(self.connection.api_client)
 

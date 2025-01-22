@@ -12,6 +12,14 @@ class ToolInfo(BaseModel):
     outputs: Dict[str, Any]
 
 class BaseTool(ABC):
+
+    def __init__(self, id: str) -> None:
+        self._id = id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
     @property
     @abstractmethod
     def input_model(self) -> Type[BaseModel]:

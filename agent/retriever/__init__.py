@@ -1,10 +1,10 @@
 import logging
 from typing import List, Dict, Any
-from ..config import Config
+from .config import RetrieverConfig
 
 class Retriever:
-    def __init__(self, config: Config):
-        self.config = config.RETRIEVER
+    def __init__(self, *args, **kwargs):
+        self.config = RetrieverConfig(*args, **kwargs)
         self.embedding_provider = self.config.EMBEDDING_PROVIDER
         self.vector_db = self.config.VECTOR_DB
         self.reference_documents = {}

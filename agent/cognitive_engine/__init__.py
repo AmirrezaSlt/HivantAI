@@ -1,16 +1,16 @@
 import logging
 from typing import List, Dict, Any, Tuple
 from .models import ReasoningStepType, ReasoningSteps
-from ..config import Config
+from .config import CognitiveEngineConfig
 from .prompt_template import system_prompt_template, context_prompt_template
 from ..output_parser import OutputParser, ResponseType
-from ..tools import BaseTool
+from agent.toolkit.tool import BaseTool
 from jinja2 import Template
 
 class CognitiveEngine:
-    def __init__(self, config: Config):
-        self.config = config.COGNITIVE_ENGINE
-        self.provider = self.config.LLM_PROVIDER(**self.config.LLM_PROVIDER_KWARGS)
+    def __init__(self, *args, **kwargs):
+        self.config = CognitiveEngineConfig(*args, **kwargs)
+        self.provider = self.config.LLM_PROVIDER
         self.system_prompt = system_prompt_template
         self.context_prompt = context_prompt_template
         self.reasoning_steps = ReasoningSteps()
