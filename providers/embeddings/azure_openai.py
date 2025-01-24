@@ -1,6 +1,6 @@
 import requests
 from typing import Optional, List
-from agent.embeddings import BaseEmbeddingProvider
+from agent.retriever.embeddings import BaseEmbeddingProvider
 
 class AzureOpenAIEmbeddingProvider(BaseEmbeddingProvider):
     dimension = 1536

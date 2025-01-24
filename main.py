@@ -1,7 +1,6 @@
 import os
 import sys
 from agent.agent import Agent
-from agent.interactions.conversation import Conversation
 from typing import Dict, Any
 from providers.llm.azure_openai import AzureOpenAILLMProvider
 from providers.embeddings.azure_openai import AzureOpenAIEmbeddingProvider
@@ -10,11 +9,12 @@ from providers.connections.kubernetes import KubernetesConnection
 from providers.tools.kubernetes_logs import KubernetesLogsTool
 # from agent.vector_db.chroma_db import ChromaVectorDB
 from providers.vector_dbs.qdrant import QdrantVectorDB
-from agent.reference_documents.text_file import TextFileReferenceDocument
+from agent.retriever.reference_documents.text_file import TextFileReferenceDocument
 from agent.cognitive_engine import CognitiveEngine
 from agent.retriever import Retriever
 from agent.toolkit import Toolkit
 from agent.agent import Agent
+from agent.input import Input
 
 def main():
 
@@ -29,7 +29,7 @@ def main():
     )
 
     retriever = Retriever(
-        NUM_RELEVANT_DOCUMENTS=3,
+        NUM_REFERENCE_DOCUMENTS=3,
         EMBEDDING_PROVIDER=AzureOpenAIEmbeddingProvider(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -38,6 +38,7 @@ def main():
         ),
         VECTOR_DB=QdrantVectorDB(
             dimension=1536,
+            in_memory=True,
             host="vector-db",
             port=6333,
             collection="default",
@@ -68,13 +69,15 @@ def main():
         retriever=retriever,
         toolkit=toolkit
     )
-    conversation = Conversation(agent)
-    # agent.setup()
+    agent.setup()
     # agent.load_data_to_vector_db()
     print("Agent initialized. Type 'quit' or 'exit' to end the conversation.")
     print("\nYou: ", end='', flush=True)
 
     try:
+        with open("providers/data/kubectl_access.txt", "rb") as f:
+            kubectl_access_content = f.read()
+        
         for line in sys.stdin:
             user_input = line.strip()
             
@@ -84,8 +87,10 @@ def main():
                 print("\nYou: ", end='', flush=True)
                 continue
 
-            # Get response using conversation
-            response = conversation.send_message(user_input)
+            attachments = {"kubectl_access.txt": kubectl_access_content}
+            response = agent.respond(
+                input=Input(message=user_input, attachments=attachments), 
+            )
             print(f"\nAssistant: {response}")
             print("\nYou: ", end='', flush=True)
 

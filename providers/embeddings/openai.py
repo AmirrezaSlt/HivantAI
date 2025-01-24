@@ -1,7 +1,7 @@
 import os
 import requests
 from typing import Optional, List
-from agent.embeddings import BaseEmbeddingProvider
+from agent.retriever.embeddings import BaseEmbeddingProvider
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     dimension = 1536

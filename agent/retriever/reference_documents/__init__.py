@@ -11,17 +11,29 @@ class BaseReferenceDocument(ABC):
         """Get the document identifier"""
         return self._id
 
+    @property
     @abstractmethod
-    def get_link(self) -> str:
+    def link(self) -> str:
         """Get document identifier/location"""
         pass
 
+    @property
     @abstractmethod
-    def get_data(self) -> Dict[str, Any]:
+    def data(self) -> Dict[str, Any]:
         """Get document data content"""
         pass
 
+    @property
     @abstractmethod
-    def get_metadata(self) -> Dict[str, Any]:
+    def metadata(self) -> Dict[str, Any]:
         """Get document metadata"""
         pass
+
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "link": self.link,
+            "data": self.data,
+            "metadata": self.metadata
+        }
+    

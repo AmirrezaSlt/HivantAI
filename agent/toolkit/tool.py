@@ -29,6 +29,13 @@ class BaseTool(ABC):
         pass
 
     @property
+    def input_schema(self) -> Dict[str, Any]:
+        """
+        Return JSON schema for the input model.
+        """
+        return self.input_model.model_json_schema()
+
+    @property
     @abstractmethod
     def output_schema(self) -> Dict[str, Any]:
         """
@@ -40,25 +47,26 @@ class BaseTool(ABC):
     @abstractmethod
     def description(self) -> str:
         pass
-    
-    @property
-    def info(self) -> ToolInfo:
-        return ToolInfo(
-            description=self.description,
-            inputs=self.input_model.model_json_schema(),
-            outputs=self.output_schema
-        )
 
     @abstractmethod
     def _invoke(self, inputs: BaseModel) -> Dict[str, Any]:
         pass
 
     def invoke(self, **kwargs) -> Dict[str, Any]:
-        try:
-            validated_inputs = self.input_model(**kwargs)
-            outputs = self._invoke(validated_inputs)
-            return json.loads(json.dumps(outputs, default=str))
-        except ValidationError as e:
-            raise ValueError(f"Invalid input: {e}")
-        except JSONSerializationError as e:
-            raise ValueError(f"Error serializing output: {e}")
+        return self._invoke(self.input_model(**kwargs))
+    
+    @property
+    def info(self) -> ToolInfo:
+        return ToolInfo(
+            description=self.description,
+            inputs=self.input_schema,
+            outputs=self.output_schema
+        )
+
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema
+        }

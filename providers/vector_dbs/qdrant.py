@@ -1,7 +1,7 @@
 from qdrant_client import QdrantClient as QClient
 from qdrant_client.http import models
 from typing import List, Any, Tuple, Dict, Optional
-from agent.vector_db import BaseVectorDB
+from agent.retriever.vector_db import BaseVectorDB
 import logging
 import uuid
 
@@ -10,8 +10,9 @@ class QdrantVectorDB(BaseVectorDB):
 
     def __init__(self, 
             dimension: int,
-            host: str = "localhost", 
-            port: int = 6333, 
+            in_memory: bool = True,
+            host: Optional[str] = "localhost", 
+            port: Optional[int] = 6333, 
             score_threshold: float = 0.0,
             collection: str = "default",
             similarity_metric: str = "Cosine",
@@ -23,7 +24,7 @@ class QdrantVectorDB(BaseVectorDB):
             dimension=dimension,
             **kwargs
         )
-        self.client = QClient(host=host, port=port)
+        self.client = QClient(location=":memory:") if in_memory else QClient(host=host, port=port)
         self.collection = collection
 
     def setup(self) -> None:

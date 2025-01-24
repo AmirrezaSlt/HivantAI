@@ -1,15 +1,18 @@
 import logging
 from typing import List, Dict, Any
 from .config import RetrieverConfig
+from .reference_documents import BaseReferenceDocument
 
 class Retriever:
     def __init__(self, *args, **kwargs):
-        self.config = RetrieverConfig(*args, **kwargs)
-        self.embedding_provider = self.config.EMBEDDING_PROVIDER
-        self.vector_db = self.config.VECTOR_DB
+        self._config = RetrieverConfig(*args, **kwargs)
+        self.embedding_provider = self._config.EMBEDDING_PROVIDER
+        self.vector_db = self._config.VECTOR_DB
         self.reference_documents = {}
-        for doc in self.config.REFERENCE_DOCUMENTS:
+        for doc in self._config.REFERENCE_DOCUMENTS:
             self.reference_documents[doc.id] = doc
+
+        self.attachments = []
 
     def setup(self):
         """
@@ -19,12 +22,12 @@ class Retriever:
 
     def load_data_to_vector_db(self):
         vectors = []
-        for reference_document in self.reference_documents:
-            content = reference_document.get_data()
+        for name, document in self.reference_documents.items():
+            content = document.get_data()
             embedding = self.embedding_provider.embed_text(content)
             if embedding:
-                metadata = reference_document.get_metadata()
-                metadata.update({'source': reference_document.id})
+                metadata = document.get_metadata()
+                metadata.update({'source': name})
                 vectors.append((embedding, metadata))
         if vectors:
             self.vector_db.add_vectors(vectors)
@@ -34,7 +37,7 @@ class Retriever:
             logging.error("No vectors to store")
             return 0
 
-    def query_and_retrieve(self, query: str) -> List[Dict[str, Any]]:
+    def query_and_retrieve(self, query: str) -> List[BaseReferenceDocument]:
         """
         Queries the vector database and retrieves the relevant documents.
         """
@@ -43,6 +46,6 @@ class Retriever:
             logging.error("Failed to generate embedding for the query.")
             return []
 
-        results = self.vector_db.find_similar(query_embedding, self.config.NUM_RELEVANT_DOCUMENTS)
-        relevant_documents = [self.reference_documents[res['source']] for res in results]
-        return relevant_documents
+        results = self.vector_db.find_similar(query_embedding, self._config.NUM_REFERENCE_DOCUMENTS)
+        reference_documents = [self.reference_documents[res['source']] for res in results]
+        return reference_documents

@@ -10,11 +10,13 @@ class TextFileReferenceDocument(BaseReferenceDocument):
         if not os.path.exists(self._file_path):
             raise ValueError(f"Text file not found: {self._file_path}")
 
-    def get_link(self) -> str:
+    @property
+    def link(self) -> str:
         """Return the absolute file path as the resource identifier"""
         return self._file_path
 
-    def get_data(self) -> str:
+    @property
+    def data(self) -> str:
         """Read and return the file content"""
         try:
             with open(self._file_path, 'r', encoding='utf-8') as file:
@@ -23,7 +25,8 @@ class TextFileReferenceDocument(BaseReferenceDocument):
         except Exception as e:
             raise ValueError(f"Error reading text file: {str(e)}")
 
-    def get_metadata(self) -> Dict[str, Any]:
+    @property
+    def metadata(self) -> Dict[str, Any]:
         """Return file metadata"""
         return {
             'id': self.id,

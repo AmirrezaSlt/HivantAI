@@ -1,7 +1,7 @@
-from typing import Dict, Any
 from .cognitive_engine import CognitiveEngine
 from .retriever import Retriever
 from .toolkit import Toolkit
+from .input import Input
 
 class Agent:
     def __init__(self, toolkit: Toolkit, cognitive_engine: CognitiveEngine, retriever: Retriever):
@@ -17,13 +17,13 @@ class Agent:
         if self.retriever:
             self.retriever.load_data_to_vector_db()
       
-    def respond(self, user_message: str) -> str:
-        relevant_documents = self.retriever.query_and_retrieve(query=user_message) if self.retriever else None
+    def respond(self, input: Input) -> str:
+        reference_documents = self.retriever.query_and_retrieve(query=input.message) if self.retriever else None
         available_tools = self.toolkit.tools if self.toolkit else None
         
         response = self.cognitive_engine.respond(
-            user_message=user_message, 
-            relevant_documents=relevant_documents,
+            input=input,
+            reference_documents=reference_documents,
             tools=available_tools
         )
         return response
