@@ -1,0 +1,201 @@
+# Debugging Kubernetes Workloads Using Python Client: A Decision-Driven Approach
+
+This guide outlines a process-driven workflow for debugging Kubernetes workloads (pods, deployments, and jobs) using the Kubernetes Python client. Instead of focusing solely on code, this guide emphasizes the decision-making process—when to inspect status details, when to examine logs, and what additional steps to take under specific conditions. By keeping outputs concise (e.g., using limited logs), the information stays manageable, especially when parsed by LLMs.
+
+## General Decision Process
+
+- **Identify the Resource:**  
+  Begin by determining which resource (pod, deployment, or job) is exhibiting issues.
+
+- **Retrieve Status:**  
+  The first step should always be to gather the current status information. This gives you an overview of the health and states (e.g., Running, Pending, Failed) of the resource.  
+  - If the status is not as expected (e.g., a pod is in `Pending` state or a job is marked as `Failed`), proceed to further inspection.
+
+- **Analyze Logs:**  
+  Logs help pinpoint error messages or issues exhibited by the resource.
+  - For pods, extracting a small tail of the logs (e.g., the last 50 lines) can often reveal recent errors without overwhelming data.
+  - If logs are sparse or indicate an error, cross-reference with events.
+
+- **Review Events:**  
+  Events provide context such as scheduling issues, configuration errors, or back-off events that the primary status might not capture.
+  - They are especially useful when a resource is stuck in an unusual state.
+
+- **Iterate and Drill Down:**  
+  For higher-level resources like deployments and jobs, if issues persist, drill down to inspect associated components (such as ReplicaSets for deployments or pods for jobs).
+
+---
+
+## Debugging Pods
+
+### Step 1: Check Pod Status
+
+Begin with retrieving the pod's status. This status provides immediate information:
+- **Running:** The pod is operational, though internal container issues might still exist.
+- **Pending/Unknown:** The pod could be waiting for resources or encountering scheduling challenges.
+- **Failed/CrashLoopBackOff:** The pod has encountered errors; further investigation is needed via logs.
+
+    ```python
+    from kubernetes import client, config
+    config.load_kube_config()
+    v1 = client.CoreV1Api()
+
+    # Retrieve pod details
+    pod = v1.read_namespaced_pod(name="example-pod", namespace="default")
+    print(pod.status)
+    ```
+
+### Step 2: Examine Pod Logs
+
+Decide whether to fetch logs based on the pod's status:
+- **Issue Indicated (e.g., CrashLoopBackOff):**  
+  Retrieve a brief tail of the logs. This helps in identifying error messages without loading voluminous output.
+- **Subtle or Intermittent Issues:**  
+  Even if the pod appears healthy, targeted log extraction might reveal sporadic warnings or unexpected behavior.
+
+    ```python
+    # Retrieve a concise tail of the pod log for quick insight
+    logs = v1.read_namespaced_pod_log(
+        name="example-pod", 
+        namespace="default", 
+        tail_lines=50
+    )
+    print(logs)
+    ```
+
+### Step 3: Review Pod Events
+
+If the status and logs do not clearly indicate issues, events can provide the context:
+- Look for messages related to scheduling delays, container restarts, or warnings.
+- Use events as a secondary check to spot environmental or resource-related issues.
+
+    ```python
+    # List recent events tied to the pod
+    events = v1.list_namespaced_event(
+        namespace="default", 
+        field_selector="involvedObject.name=example-pod"
+    )
+    for event in events.items:
+        print(event.message)
+    ```
+
+### Decision Flow for Pods
+
+- **Pod in Pending:**  
+  - **Action:** Immediately check events for scheduling delays or resource allocation issues.
+  
+- **Pod CrashLooping or Failing:**  
+  - **Action:** Analyze logs for error patterns. Verify container statuses to determine if misconfiguration or application errors are at fault.
+  
+- **Healthy Pod with Hidden Issues:**  
+  - **Action:** Look closer at individual container statuses and events to uncover any subtle warning signs.
+
+---
+
+## Debugging Deployments
+
+### Step 1: Check Deployment Status
+
+Start by reviewing high-level deployment information such as replica counts and rollout conditions.
+
+    ```python
+    from kubernetes import client, config
+    config.load_kube_config()
+    apps_v1 = client.AppsV1Api()
+
+    # Retrieve deployment status
+    deployment = apps_v1.read_namespaced_deployment(name="example-deployment", namespace="default")
+    print(deployment.status)
+    ```
+
+### Step 2: Understand Underlying Components
+
+If there are issues indicated by the deployment status:
+- **Inspect ReplicaSets:**  
+  Identify which ReplicaSets are not achieving the desired state.
+- **Drill Down into Pods:**  
+  Check the status, logs, and events for pods managed by these ReplicaSets.
+  
+- **Monitor Rollout Progress:**  
+  - **Stalled Rollout:** Look for pods that are not ready or are failing.
+  - **Inconsistent Replica Counts:** Steps may be needed to check which specific pods are causing setbacks.
+
+### Step 3: Investigate Deployment Events
+
+Events captured during the deployment process can help pinpoint:
+- Issues during pod creation.
+- Errors in configuration changes or version rollouts.
+
+    ```python
+    events = v1.list_namespaced_event(
+        namespace="default", 
+        field_selector="involvedObject.name=example-deployment"
+    )
+    for event in events.items:
+        print(event.message)
+    ```
+
+### Decision Flow for Deployments
+
+- **Incomplete or Stalled Deployment:**  
+  - **Action:** Inspect the status of individual pods and associated ReplicaSets.
+  
+- **Rollout Warnings in Events:**  
+  - **Action:** Fetch detailed logs from a few problematic pods to determine the root cause.
+  
+- **Mismatch in Replica Counts:**  
+  - **Action:** Identify which pods are not transitioning to the Ready state and check for environmental or configuration issues.
+
+---
+
+## Debugging Jobs
+
+### Step 1: Examine Job Status
+
+Retrieve the job's status to check for successful completion or errors. Focus on conditions indicating whether the job is active, complete, or failed.
+
+    ```python
+    from kubernetes import client, config
+    config.load_kube_config()
+    batch_v1 = client.BatchV1Api()
+
+    # Retrieve job details
+    job = batch_v1.read_namespaced_job(name="example-job", namespace="default")
+    print(job.status)
+    ```
+
+### Step 2: Inspect Associated Pods
+
+Job pods execute the task:
+- **Failure Indications:**  
+  - **Action:** Check the logs of the job pods, especially if there are signs of repeated restarts or back-off events.
+  
+- **Stalled Job Execution:**  
+  - **Action:** Verify that pods are progressing as expected and are not stuck in an initialization phase.
+
+### Step 3: Gather Logs and Review Events
+
+As with pods:
+- **Logs:** Use a limited number of lines to avoid overwhelming output while capturing key errors.
+- **Events:** They reveal if there are underlying scheduling or configuration issues affecting the job.
+
+### Decision Flow for Jobs
+
+- **Job Marked as Failed:**  
+  - **Action:** Deep dive into the logs for error analysis and inspect events for hints on resource constraints or misconfiguration.
+  
+- **Job Active but Not Completing:**  
+  - **Action:** Confirm that the associated pods are making progress and not caught in loops or waiting states.
+
+---
+
+## Debugging Workflow Summary
+
+1. **Identify** the troubled resource (pod, deployment, or job).
+2. **Retrieve Status** to form an initial diagnosis.
+3. **Analyze Logs** for concise error messages, making sure to limit output size.
+4. **Review Events** to supplement insights and uncover hidden issues.
+5. **Drill Down** into related components (e.g., ReplicaSets for deployments; pods for jobs) as necessary.
+6. **Iterate and Isolate:**  
+   Use the gathered data to refine your diagnosis, address issues incrementally, and eventually isolate the root cause.
+
+By following this decision-driven approach, you can efficiently navigate through complex Kubernetes environments. Each step helps narrow down potential issues while keeping outputs manageable, allowing for a quicker resolution of problems.

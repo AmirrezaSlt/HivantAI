@@ -1,47 +1,42 @@
-from typing import List, Dict, Any, Optional, Union, Literal
+from typing import List, Dict, Any, Optional, Union, Literal, Annotated
 from enum import Enum
 from pydantic import BaseModel, Field, field_serializer
 from agent.input import Input
 from agent.toolkit.tool import BaseTool
 from agent.retriever.reference_documents import BaseReferenceDocument
+import json
 
 class ReasoningStepType(str, Enum):
     INPUT = "input"
-    Reference_DOCUMENTS = "reference_documents"
-    TOOL = "tool"
+    REFERENCE_DOCUMENTS = "reference_documents"
+    CLARIFICATION = "clarification"
+    TOOL_USE_REQUEST = "tool_use_request"
+    TOOL_USE_RESPONSE = "tool_use_response"
     RESPONSE = "response"
-    
-class BaseReasoningStep(BaseModel):
-    type: Literal[ReasoningStepType.INPUT, ReasoningStepType.TOOL, ReasoningStepType.RESPONSE]
-    title: str = Field(
-        description="Brief, human-readable description of the step",
-    )
 
-    explanation: Optional[str] = Field(
-        default=None,
-        description="Optional explanation of why this step was chosen",
-    )
-
-    model_config = {
-        "discriminator_key": "type"
-    }
-
-class ToolStep(BaseReasoningStep):
-    type: Literal[ReasoningStepType.TOOL] = ReasoningStepType.TOOL
+class ToolUseRequestStep(BaseModel):
+    type: Literal[ReasoningStepType.TOOL_USE_REQUEST] = ReasoningStepType.TOOL_USE_REQUEST
     tool_name: str = Field(description="Name of the tool to use")
     input_data: Dict[str, Any] = Field(description="Input data for the tool")
+
+class ToolUseResponseStep(BaseModel):
+    type: Literal[ReasoningStepType.TOOL_USE_RESPONSE] = ReasoningStepType.TOOL_USE_RESPONSE
     output_data: Dict[str, Any] = Field(description="Output data from the tool")
 
-class ResponseStep(BaseReasoningStep):
+class ClarificationStep(BaseModel):
+    type: Literal[ReasoningStepType.CLARIFICATION] = ReasoningStepType.CLARIFICATION
+    clarification: str = Field(description="Clarification to the user")
+
+class ResponseStep(BaseModel):
     type: Literal[ReasoningStepType.RESPONSE] = ReasoningStepType.RESPONSE
     response: str = Field(description="Response to the user")
 
-class InputStep(BaseReasoningStep):
+class InputStep(BaseModel):
     type: Literal[ReasoningStepType.INPUT] = ReasoningStepType.INPUT
     input: Input = Field(description="Input of the user")
 
-class RelevantDocumentsStep(BaseReasoningStep):
-    type: Literal[ReasoningStepType.Reference_DOCUMENTS] = ReasoningStepType.Reference_DOCUMENTS
+class RelevantDocumentsStep(BaseModel):
+    type: Literal[ReasoningStepType.REFERENCE_DOCUMENTS] = ReasoningStepType.REFERENCE_DOCUMENTS
     reference_documents: List[BaseReferenceDocument] = Field(default_factory=list)
 
     model_config = {
@@ -59,46 +54,46 @@ class RelevantDocumentsStep(BaseReasoningStep):
         ]
 
 class LLMResponse(BaseModel):
-    step: Union[ToolStep, ResponseStep] = Field(
-        description="Reasoning step for the LLM response",
-        discriminator='type'
-    )
+    step: Annotated[Union[ToolUseRequestStep, ResponseStep, ClarificationStep], Field(discriminator="type")]
+    explanation: Optional[str] = Field(default=None, description="Short explanation of why this step was chosen")
 
 class ReasoningState:
     
-    def __init__(self, tools: List[BaseTool]):
+    def __init__(self, tools: Dict[str, BaseTool], system_prompt: str):
         self.tools = tools
         self.trail = []
+        self._system_prompt = system_prompt
 
     def update_state_from_llm_response(self, response: LLMResponse) -> None:
         """Update the reasoning state from a raw LLM response string."""
-        self.trail.append(response.step)
+        self.trail.append(response)
+
+    def add_tool_use_response(self, response: ToolUseResponseStep) -> None:
+        self.trail.append(response)
 
     def update_state_from_input(self, input: Input, reference_documents: List[BaseReferenceDocument]) -> None:
         self.trail.append(InputStep(
-            title="User Input",
             input=input
         ))
         if reference_documents:
             self.trail.append(RelevantDocumentsStep(
-                title="Retrieved relevant documents",
                 reference_documents=reference_documents
             ))
     
     @property
     def system_prompt(self) -> str:
         prompt = [
-            "You are an AI assistant that thinks step by step.",
+            self._system_prompt,
             "",
             "Format your response using the following schema:",
-            str(LLMResponse.model_json_schema()),
+            json.dumps(LLMResponse.model_json_schema(), indent=2),
             ""
         ]
         
         if self.tools:
             prompt.extend([
                 "Available tools:",
-                *[f"- {tool.id}: {tool.description}" for tool in self.tools],
+                *[f"- {name}: {tool.description}" for name, tool in self.tools.items()],
                 "  Input schema: {tool.input_schema}",
                 "  Output schema: {tool.output_schema}",
                 ""

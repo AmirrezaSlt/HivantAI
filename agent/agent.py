@@ -17,13 +17,15 @@ class Agent:
         if self.retriever:
             self.retriever.load_data_to_vector_db()
       
-    def respond(self, input: Input) -> str:
+    def respond(self, input: Input, state = None) -> str:
+
         reference_documents = self.retriever.query_and_retrieve(query=input.message) if self.retriever else None
         available_tools = self.toolkit.tools if self.toolkit else None
         
         response = self.cognitive_engine.respond(
             input=input,
             reference_documents=reference_documents,
-            tools=available_tools
+            tools=available_tools,
+            state=state
         )
         return response

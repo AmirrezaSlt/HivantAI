@@ -1,129 +1,81 @@
-Agent Architecture Overview
-=========================
+Updated Agent Architecture Overview
+=====================================
 
 Core Components
--------------
+---------------
 1. Agent (agent/agent.py)
-   - Main orchestrator class
-   - Dependencies: Toolkit, CognitiveEngine, Retriever
-   - Key methods:
+   - Main orchestrator class.
+   - **Composes:**
+     * CognitiveEngine (agent/cognitive_engine)
+     * Retriever (agent/retriever)
+     * Toolkit (agent/toolkit)
+   - **Key Methods:**
      * setup() -> None
      * load_data_to_vector_db() -> None
      * respond(input: Input) -> str
 
 2. CognitiveEngine (agent/cognitive_engine/__init__.py)
-   - Handles reasoning and LLM interactions
-   - Dependencies: LLMProvider, PromptBuilder
-   - Key methods:
-     * respond(input: Input, relevant_documents: List[Dict], tools: List[BaseTool]) -> str
+   - Handles reasoning and LLM interactions.
+   - **Dependencies:**
+     * LLM Provider (agent/llm.py): Provides the interface to generate responses.
+   - **Key Methods:**
+     * respond(input: Input, reference_documents: List[Dict], tools: Dict[str, BaseTool], state: ReasoningState) -> Tuple[str, ReasoningState]
      * _reason(reasoning_state: ReasoningState) -> str
      * _send_message(messages: List[dict]) -> Tuple[dict, str]
 
 3. Retriever (agent/retriever/__init__.py)
-   - Manages document retrieval and vector search
-   - Dependencies:
-     * EmbeddingProvider: Generates embeddings for documents and queries
-     * VectorDB: Stores and searches document vectors
-     * ReferenceDocuments: Source documents to be embedded and retrieved
-   - Key methods:
+   - Manages document retrieval and vector search.
+   - **Dependencies:**
+     * Embedding Provider (agent/retriever/embeddings.py): Generates embeddings from text.
+     * Vector DB (agent/retriever/vector_db.py): Stores vectors and performs similarity searches.
+     * Data Source / Reference Documents (agent/retriever/reference_documents): Source documents for embedding and retrieval.
+   - **Key Methods:**
      * setup() -> None
      * load_data_to_vector_db() -> int
      * query_and_retrieve(query: str) -> List[BaseReferenceDocument]
 
 4. Toolkit (agent/toolkit/__init__.py)
-   - Manages available tools
-   - Dependencies:
-     * Tools: Collection of BaseTool implementations for specific functionalities
-   - Key properties:
+   - Manages available tools that extend the agent's capabilities.
+   - **Dependencies:**
+     * Tools (agent/toolkit/tool.py, etc.): Collection of BaseTool implementations (e.g., CodeExecutionTool).
+   - **Key Properties:**
      * tools: Dict[str, BaseTool]
 
-Abstract Base Classes
--------------------
-1. BaseLLMProvider (agent/llm.py)
-   - Abstract interface for LLM providers
-   - Key methods:
-     * generate_response(messages: List[dict], max_tokens: int, temperature: float) -> Optional[str]
 
-2. BaseEmbeddingProvider (agent/retriever/embeddings.py)
-   - Abstract interface for embedding providers
-   - Key methods:
-     * embed_text(text: str) -> Optional[List[float]]
-
-3. BaseVectorDB (agent/retriever/vector_db.py)
-   - Abstract interface for vector databases
-   - Key methods:
-     * setup() -> None
-     * teardown() -> None
-     * add_vectors(data: List[Tuple[List[float], dict]]) -> None
-     * find_similar(query_vector: List[float], top_k: int, filter_dict: Optional[Dict]) -> List[Dict]
-     * delete_vectors(filter_dict: Dict) -> None
-     * update_vectors(retriever_uri_pairs: List[Tuple[str, str, List[float]]]) -> None
-
-4. BaseTool (agent/toolkit/tool.py)
-   - Abstract interface for tools
-   - Key methods:
-     * invoke(**kwargs) -> Dict[str, Any]
-     * _invoke(inputs: BaseModel) -> Dict[str, Any]
-
-5. BaseConnection (agent/connections.py)
-   - Abstract interface for connections
-   - Key methods:
-     * get_connection(*args, **kwargs)
-     * close()
-     * connection() (context manager)
+Supporting Abstract Base Classes
+----------------------------------
+- **BaseLLMProvider** (agent/llm.py): Interface for LLM providers.
+- **BaseEmbeddingProvider** (agent/retriever/embeddings.py): Interface for embedding providers.
+- **BaseVectorDB** (agent/retriever/vector_db.py): Interface for vector databases.
+- **BaseTool** (agent/toolkit/tool.py): Interface for tool implementations.
+- **BaseConnection** (agent/connections.py): Interface for connection management.
 
 Models and Data Classes
----------------------
-1. Input (agent/input.py)
-   - Represents user input
-   - Properties:
-     * message: str
-     * attachments: Dict[str, bytes]
-     * timestamp: datetime
-
-2. ReasoningState (agent/cognitive_engine/models.py)
-   - Tracks reasoning process
-   - Properties:
-     * trail: List[Union[ToolStep, ResponseStep, InputStep]]
-     * tools: Dict[str, BaseTool]
-
-3. BaseReferenceDocument (agent/retriever/reference_documents/__init__.py)
-   - Base class for reference documents
-   - Key properties:
-     * id: str
-     * link: str
-     * data: Dict[str, Any]
-     * metadata: Dict[str, Any]
+------------------------
+- **Input** (agent/input.py): Represents user input.
+- **ReasoningState** (agent/cognitive_engine/models.py): Tracks the reasoning process.
+- **BaseReferenceDocument** (agent/retriever/reference_documents/__init__.py): Base class for reference documents.
 
 Configuration Classes
-------------------
-1. AgentConfig (agent/config.py)
-   - RETRIEVER: Retriever
-   - COGNITIVE_ENGINE: CognitiveEngine
-   - TOOLKIT: Toolkit
+---------------------
+- **AgentConfig** (agent/config.py): Aggregates configurations for Agent components.
+- **CognitiveEngineConfig** (agent/cognitive_engine/config.py): Configurations for CognitiveEngine including the LLM provider.
+- **RetrieverConfig** (agent/retriever/config.py): Configurations for Retriever components including the embedding provider, vector DB, and data sources.
+- **ToolkitConfig** (agent/toolkit/config.py): Configurations for the tools available in the Toolkit.
 
-2. CognitiveEngineConfig (agent/cognitive_engine/config.py)
-   - LLM_PROVIDER: BaseLLMProvider
-
-3. RetrieverConfig (agent/retriever/config.py)
-   - ENABLED: bool
-   - NUM_RELEVANT_DOCUMENTS: int
-   - EMBEDDING_PROVIDER: BaseEmbeddingProvider
-   - VECTOR_DB: BaseVectorDB
-   - REFERENCE_DOCUMENTS: List[BaseReferenceDocument]
-
-4. ToolkitConfig (agent/toolkit/config.py)
-   - ENABLED: bool
-   - TOOLS: List[BaseTool]
 
 Data Flow
---------
+---------
 1. User Input → Agent.respond()
-2. Agent.respond() → Retriever.query_and_retrieve()
-3. Agent.respond() → CognitiveEngine.respond()
-4. CognitiveEngine._reason() → LLMProvider.generate_response()
-5. CognitiveEngine._reason() → Tool.invoke() (when tool use is needed)
-6. Final response returned to user
+2. Agent.respond() → Retriever.query_and_retrieve() for fetching reference documents.
+3. Agent.respond() → CognitiveEngine.respond() (which internally calls the LLM Provider).
+4. CognitiveEngine may invoke tools (via Toolkit) based on reasoning steps.
+5. Final response is generated and returned to the user.
 
-Each component is initialized with its respective configuration class, which defines
-the concrete implementations of the abstract base classes to be used. 
+
+Component Relationships Summary:
+----------------------------------
+- **Agent** ⇒ CognitiveEngine, Retriever, Toolkit
+- **CognitiveEngine** ⇒ LLM Provider
+- **Retriever** ⇒ Vector DB, Embedding Provider, Data Source (Reference Documents)
+- **Toolkit** ⇒ Tools
