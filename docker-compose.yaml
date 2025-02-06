@@ -13,6 +13,7 @@ services:
       - ./providers:/llm/providers
       - ~/.kube/config:/root/.kube/config
       - ./main.py:/llm/main.py # FOR TESTING
+      - ./data/logs:/var/log/agent
   
   executor:
     build: .
@@ -36,4 +37,4 @@ services:
   #   environment:
   #     - QDRANT__SERVICE__GRPC_PORT=6334
   #   volumes:
-  #     - ./qdrant_data:/qdrant/storage
+  #     - ./data/qdrant:/qdrant/storage

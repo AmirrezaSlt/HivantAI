@@ -1,6 +1,6 @@
 from typing import Optional, List
 import requests
-from agent.llm import BaseLLMProvider
+from agent.cognitive_engine.llm import BaseLLMProvider
 
 class AzureOpenAILLMProvider(BaseLLMProvider):
     def __init__(self, api_key: str, endpoint: str, deployment_name: str):

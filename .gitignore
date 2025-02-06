@@ -171,4 +171,4 @@ cython_debug/
 .pypirc
 
 # HivantAI
-qdrant_data/
+data/

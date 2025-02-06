@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, InstanceOf
-from ..llm import BaseLLMProvider
+from .llm import BaseLLMProvider
 
 class CognitiveEngineConfig(BaseModel):
     SYSTEM_PROMPT: str = Field(default="You are an AI assistant that thinks step by step.", description="System prompt")

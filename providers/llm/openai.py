@@ -1,7 +1,7 @@
 import os
 from typing import Optional, List
 import requests
-from agent.llm import BaseLLMProvider
+from agent.cognitive_engine.llm import BaseLLMProvider
 
 class OpenAILLMProvider(BaseLLMProvider):
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4"):

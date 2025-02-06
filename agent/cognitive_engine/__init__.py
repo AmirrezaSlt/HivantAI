@@ -4,12 +4,14 @@ from .models import ReasoningState, LLMResponse, ReasoningStepType, ToolUseRespo
 from .config import CognitiveEngineConfig
 from agent.toolkit.tool import BaseTool
 from agent.input import Input
+from agent.logger import logger
 
 class CognitiveEngine:
     def __init__(self, *args, **kwargs):
         self.config = CognitiveEngineConfig(*args, **kwargs)
         self.provider = self.config.LLM_PROVIDER
         self.system_prompt = self.config.SYSTEM_PROMPT or "You are an AI assistant that thinks step by step."
+        logger.debug(f"CognitiveEngine initialized with system_prompt: {self.system_prompt}")
         
     def respond(self, 
             input: Input,
@@ -17,46 +19,75 @@ class CognitiveEngine:
             tools: Dict[str, BaseTool] = None,
             state: ReasoningState = None
         ) -> Tuple[str, ReasoningState]:
-
+        logger.debug(f"Input received: {input}")
+        if reference_documents:
+            logger.debug(f"Reference documents provided: {reference_documents}")
+        if tools:
+            logger.debug(f"Tools provided: {list(tools.keys())}")
+            
         reasoning_state = state or ReasoningState(tools=tools, system_prompt=self.system_prompt)
         reasoning_state.update_state_from_input(input, reference_documents)
+        logger.debug("Reasoning state updated from input.")
         
         response = self._reason(reasoning_state)
+        logger.debug("Response generation complete.")
         return response, reasoning_state
 
     def _reason(self, reasoning_state: ReasoningState) -> str:
+        logger.debug(f"Entering reasoning loop with current trail length: {len(reasoning_state.trail)}")
         while len(reasoning_state.trail) < 15:
-
+            logger.debug(f"Sending message to LLM provider. Current trail length: {len(reasoning_state.trail)}")
             response = self._send_message(reasoning_state.messages)
+            logger.debug(f"Received LLM response: {response}")
             response_type = response.step.type
+            logger.debug(f"LLM response type received: {response_type}")
+            
             reasoning_state.update_state_from_llm_response(response)
+            logger.debug(f"Reasoning state updated from LLM response. Trail length is now: {len(reasoning_state.trail)}")
 
             if response_type == ReasoningStepType.TOOL_USE_REQUEST:
-                tool = reasoning_state.tools[response.step.tool_name]
+                logger.debug(f"Tool use request detected for tool: {response.step.tool_name}")
+                tool = reasoning_state.tools.get(response.step.tool_name)
+                if tool is None:
+                    logger.error(f"Requested tool '{response.step.tool_name}' not found in the state.")
+                    raise ValueError(f"Tool {response.step.tool_name} not found.")
+                
                 result = tool.invoke(**response.step.input_data)
-                tool_response = ToolUseResponseStep(    
-                    output_data=result
-                )
-                print(tool_response)
+                logger.debug(f"Tool '{response.step.tool_name}' returned result: {result}")
+                
+                tool_response = ToolUseResponseStep(output_data=result)
+                logger.debug(f"Constructed tool use response: {tool_response}")
                 reasoning_state.add_tool_use_response(tool_response)
+                logger.debug("Tool use response added to the reasoning state. Continuing reasoning loop.")
                 continue
                 
             elif response_type == ReasoningStepType.CLARIFICATION:
+                logger.debug(f"Clarification request received: {response.step.clarification}")
                 return response.step.clarification
             
             elif response_type == ReasoningStepType.RESPONSE:
+                logger.debug(f"Final response obtained: {response.step.response}")
                 return response.step.response
             
+            else:
+                logger.error(f"Unknown response type received from LLM: {response_type}")
+                raise ValueError(f"Unknown response type: {response_type}")
+
+        logger.warning("Reasoning loop exceeded maximum allowed iterations without producing a final response.")
+        raise RuntimeError("Reasoning loop exceeded maximum iterations without a final response.")
+
     def _send_message(self, messages: List[dict]) -> Tuple[dict, str]:
+        logger.debug(f"Sending messages to LLM provider: {messages}")
         response = self.provider.generate_response(
             messages=messages,
             max_tokens=1000,
             temperature=0.7
         )
+        logger.debug(f"Raw response from LLM provider: {response}")
         try:
             parsed_response = LLMResponse.model_validate_json(response)
-            print(parsed_response)
+            logger.debug(f"Parsed LLM response: {parsed_response}")
         except ValidationError as e:
-            print(response)
+            logger.error(f"Failed to parse LLM response. Error: {e}. Raw response: {response}")
             raise ValueError(f"Failed to parse LLM response: {e}")
         return parsed_response
