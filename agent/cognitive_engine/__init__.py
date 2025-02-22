@@ -10,7 +10,7 @@ class CognitiveEngine:
     def __init__(self, *args, **kwargs):
         self.config = CognitiveEngineConfig(*args, **kwargs)
         self.provider = self.config.LLM_PROVIDER
-        self.system_prompt = self.config.SYSTEM_PROMPT or "You are an AI assistant that thinks step by step."
+        self.system_prompt = self.config.SYSTEM_PROMPT or "You are an AI assistant."
         logger.debug(f"CognitiveEngine initialized with system_prompt: {self.system_prompt}")
         
     def respond(self, 
@@ -78,11 +78,26 @@ class CognitiveEngine:
 
     def _send_message(self, messages: List[dict]) -> Tuple[dict, str]:
         logger.debug(f"Sending messages to LLM provider: {messages}")
-        response = self.provider.generate_response(
-            messages=messages,
-            max_tokens=1000,
-            temperature=0.7
-        )
+        
+        if self.provider.supports_streaming:
+            logger.debug("Using streaming response generation")
+            # Accumulate streamed chunks into full response
+            full_response = ""
+            for chunk in self.provider.stream_response(
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            ):
+                full_response += chunk
+            response = full_response
+        else:
+            logger.debug("Using standard response generation")
+            response = self.provider.generate_response(
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
         logger.debug(f"Raw response from LLM provider: {response}")
         try:
             parsed_response = LLMResponse.model_validate_json(response)
