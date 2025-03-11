@@ -4,10 +4,7 @@ from agent.agent import Agent
 from typing import Dict, Any
 from providers.llm.azure_openai import AzureOpenAILLMProvider
 from providers.embeddings.azure_openai import AzureOpenAIEmbeddingProvider
-from providers.tools.kubernetes_pod import KubernetesPodTool
 from providers.connections.kubernetes import KubernetesConnection
-from providers.tools.kubernetes_logs import KubernetesLogsTool
-# from agent.vector_db.chroma_db import ChromaVectorDB
 from providers.vector_dbs.qdrant import QdrantVectorDB
 from agent.retriever.reference_documents.text_file import TextFileReferenceDocument
 from agent.cognitive_engine import CognitiveEngine
@@ -15,7 +12,7 @@ from agent.retriever import Retriever
 from agent.toolkit import Toolkit
 from agent.agent import Agent
 from agent.input import Input
-from agent.toolkit.code_execution import CodeExecutionTool
+from agent.toolkit.config import PythonCodeExecutorConfig
 import json 
 def main():
 
@@ -60,26 +57,22 @@ def main():
     )
     
     toolkit = Toolkit(
-        TOOLS=[
-            # KubernetesPodTool(
-                # id="kubernetes_pod",
-                # kubernetes_connection=kubernetes_conn
-            # ),
-            # KubernetesLogsTool(
-                # id="kubernetes_logs",
-                # kubernetes_connection=kubernetes_conn
-            # ),
-            CodeExecutionTool(
-                id="code_execution",
-                server_address="http://executor:8000",
-                description="""
-                Runs Python code and returns the output or error message, has the following libraries installed: kubernetes. 
-                Do NOT include explanations or comments in your code.
-                You cannot handle large outputs, so if you're retrieving logs or reading files, etc, you should limit the output.
-                You can only see the print statements that you have in your code so use them whenever you need to get a response.
-                """
-            )
-        ]
+        TOOLS=[],
+        EXECUTOR=PythonCodeExecutorConfig(
+            base_image="python:3.13.1-slim",
+            python_version="3.13",
+            python_packages=["kubernetes==31.0.0"],
+            environment_variables={
+                "PYTHONUNBUFFERED": {
+                    "value": "1",
+                },
+                "PYTHONDONTWRITEBYTECODE": {
+                    "value": "1",
+                }
+            },
+            resource_requests={"cpu": "200m", "memory": "512Mi"},
+            resource_limits={"cpu": "200m", "memory": "512Mi"}
+        )
     )
 
     state = None

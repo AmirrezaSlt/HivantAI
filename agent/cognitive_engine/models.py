@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional, Union, Literal, Annotated
 from enum import Enum
 from pydantic import BaseModel, Field, field_serializer
 from agent.input import Input
-from agent.toolkit.tool import BaseTool
+from agent.toolkit import Toolkit
 from agent.retriever.reference_documents import BaseReferenceDocument
 import json
 
@@ -59,8 +59,8 @@ class LLMResponse(BaseModel):
 
 class ReasoningState:
     
-    def __init__(self, tools: Dict[str, BaseTool], system_prompt: str):
-        self.tools = tools
+    def __init__(self, toolkit: Toolkit, system_prompt: str):
+        self.toolkit = toolkit
         self.trail = []
         self._system_prompt = system_prompt
 
@@ -68,8 +68,10 @@ class ReasoningState:
         """Update the reasoning state from a raw LLM response string."""
         self.trail.append(response)
 
-    def add_tool_use_response(self, response: ToolUseResponseStep) -> None:
-        self.trail.append(response)
+    def add_tool_use_response(self, output_data: Dict[str, Any]) -> None:
+        self.trail.append(ToolUseResponseStep(
+            output_data=output_data
+        ))
 
     def update_state_from_input(self, input: Input, reference_documents: List[BaseReferenceDocument]) -> None:
         self.trail.append(InputStep(
@@ -90,14 +92,8 @@ class ReasoningState:
             ""
         ]
         
-        if self.tools:
-            prompt.extend([
-                "Available tools:",
-                *[f"- {name}: {tool.description}" for name, tool in self.tools.items()],
-                "  Input schema: {tool.input_schema}",
-                "  Output schema: {tool.output_schema}",
-                ""
-            ])
+        if self.toolkit:
+            prompt.append(self.toolkit.to_prompt())
         return "\n".join(prompt)
     
     @property

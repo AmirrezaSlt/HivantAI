@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 import requests
-from .tool import BaseTool
+from ...agent.toolkit.tool import BaseTool
 
 class CodeExecutionInput(BaseModel):
     code: str

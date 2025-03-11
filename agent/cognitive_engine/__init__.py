@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Tuple
 from pydantic import ValidationError
 from .models import ReasoningState, LLMResponse, ReasoningStepType, ToolUseResponseStep
 from .config import CognitiveEngineConfig
-from agent.toolkit.tool import BaseTool
+from agent.toolkit import Toolkit
 from agent.input import Input
 from agent.logger import logger
 
@@ -16,24 +16,24 @@ class CognitiveEngine:
     def respond(self, 
             input: Input,
             reference_documents: List[Dict[str, Any]] = None,
-            tools: Dict[str, BaseTool] = None,
+            toolkit: Toolkit = None,
             state: ReasoningState = None
         ) -> Tuple[str, ReasoningState]:
         logger.debug(f"Input received: {input}")
         if reference_documents:
             logger.debug(f"Reference documents provided: {reference_documents}")
-        if tools:
-            logger.debug(f"Tools provided: {list(tools.keys())}")
+        if toolkit:
+            logger.debug(f"Toolkit provided: {toolkit}")
             
-        reasoning_state = state or ReasoningState(tools=tools, system_prompt=self.system_prompt)
+        reasoning_state = state or ReasoningState(toolkit=toolkit, system_prompt=self.system_prompt)
         reasoning_state.update_state_from_input(input, reference_documents)
         logger.debug("Reasoning state updated from input.")
         
-        response = self._reason(reasoning_state)
+        response = self._reason(reasoning_state, toolkit)
         logger.debug("Response generation complete.")
         return response, reasoning_state
 
-    def _reason(self, reasoning_state: ReasoningState) -> str:
+    def _reason(self, reasoning_state: ReasoningState, toolkit: Toolkit) -> str:
         logger.debug(f"Entering reasoning loop with current trail length: {len(reasoning_state.trail)}")
         while len(reasoning_state.trail) < 15:
             logger.debug(f"Sending message to LLM provider. Current trail length: {len(reasoning_state.trail)}")
@@ -47,17 +47,13 @@ class CognitiveEngine:
 
             if response_type == ReasoningStepType.TOOL_USE_REQUEST:
                 logger.debug(f"Tool use request detected for tool: {response.step.tool_name}")
-                tool = reasoning_state.tools.get(response.step.tool_name)
-                if tool is None:
-                    logger.error(f"Requested tool '{response.step.tool_name}' not found in the state.")
-                    raise ValueError(f"Tool {response.step.tool_name} not found.")
                 
-                result = tool.invoke(**response.step.input_data)
+                logger.info(f"Invoking tool: {response.step.tool_name} with input: {response.step.input_data}")
+                result = toolkit.invoke_tool(response.step.tool_name, response.step.input_data)
+                logger.info(f"Tool '{response.step.tool_name}' returned result: {result}")
                 logger.debug(f"Tool '{response.step.tool_name}' returned result: {result}")
                 
-                tool_response = ToolUseResponseStep(output_data=result)
-                logger.debug(f"Constructed tool use response: {tool_response}")
-                reasoning_state.add_tool_use_response(tool_response)
+                reasoning_state.add_tool_use_response(result)
                 logger.debug("Tool use response added to the reasoning state. Continuing reasoning loop.")
                 continue
                 
