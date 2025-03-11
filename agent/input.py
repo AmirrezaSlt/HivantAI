@@ -24,6 +24,9 @@ class Input(BaseModel):
         Returns:
             Processed attachments dictionary
         """
+        if value is None:
+            return {}
+            
         processed = {}
         for filename, binary_content in value.items():
             if isinstance(binary_content, bytes):  # Only process if raw binary content

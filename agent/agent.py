@@ -17,15 +17,25 @@ class Agent:
         if self.retriever:
             self.retriever.load_data_to_vector_db()
       
-    def respond(self, input: Input, state = None) -> str:
-
-        reference_documents = self.retriever.query_and_retrieve(query=input.message) if self.retriever else None
-        available_tools = self.toolkit.tools if self.toolkit else None
+    def respond(self, input: Input, state = None) -> tuple:
+        """
+        Process input and generate a response using the cognitive engine.
         
-        response = self.cognitive_engine.respond(
+        Args:
+            input: The input message and any attachments
+            state: Optional state from previous interactions
+            
+        Returns:
+            A tuple containing (response_text, updated_state)
+        """
+        reference_documents = self.retriever.query_and_retrieve(query=input.message) if self.retriever else None
+        
+        response_text, updated_state = self.cognitive_engine.respond(
             input=input,
             reference_documents=reference_documents,
-            tools=available_tools,
+            toolkit=self.toolkit,
             state=state
         )
-        return response
+        
+        # Return both the response text and the updated state
+        return response_text, updated_state
