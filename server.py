@@ -33,16 +33,8 @@ class Message(BaseModel):
     name: Optional[str] = None
 
 class ChatCompletionRequest(BaseModel):
-    model: str
     messages: List[Message]
-    temperature: Optional[float] = 0.7
-    top_p: Optional[float] = 1.0
-    n: Optional[int] = 1
     stream: Optional[bool] = False
-    max_tokens: Optional[int] = None
-    presence_penalty: Optional[float] = 0
-    frequency_penalty: Optional[float] = 0
-    user: Optional[str] = None
     state: Optional[Dict[str, Any]] = None
     attachments: Optional[Dict[str, bytes]] = None
 
@@ -58,17 +50,13 @@ class ChatCompletionResponseUsage(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     id: str
-    object: str = "chat.completion"
     created: int
-    model: str
     choices: List[ChatCompletionResponseChoice]
     usage: ChatCompletionResponseUsage
 
 class StreamChunk(BaseModel):
     id: str
-    object: str = "chat.completion.chunk"
     created: int
-    model: str
     choices: List[Dict[str, Any]]
 
 # Singleton agent instance
@@ -211,9 +199,7 @@ async def chat_completions(
             # Start the response with an empty chunk
             start_chunk = {
                 "id": response_id,
-                "object": "chat.completion.chunk",
                 "created": created_time,
-                "model": request.model,
                 "choices": [{
                     "index": 0,
                     "delta": {"role": "assistant"},
@@ -233,9 +219,7 @@ async def chat_completions(
             for i, word in enumerate(words):
                 chunk = {
                     "id": response_id,
-                    "object": "chat.completion.chunk",
                     "created": created_time,
-                    "model": request.model,
                     "choices": [{
                         "index": 0,
                         "delta": {"content": word + (" " if i < len(words) - 1 else "")},
@@ -264,7 +248,6 @@ async def chat_completions(
         completion_response = ChatCompletionResponse(
             id=f"chatcmpl-{datetime.now().timestamp()}",
             created=int(datetime.now().timestamp()),
-            model=request.model,
             choices=[
                 ChatCompletionResponseChoice(
                     index=0,
