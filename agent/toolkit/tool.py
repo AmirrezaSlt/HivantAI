@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Type
-import json
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 class JSONSerializationError(Exception):
     pass

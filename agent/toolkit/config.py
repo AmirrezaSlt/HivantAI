@@ -3,6 +3,13 @@ from typing import Dict, List, Optional
 from .tool import BaseTool
 
 class PythonCodeExecutorConfig(BaseModel):
+    """
+    Configuration for the Python code executor.
+    """
+    id: str = Field(
+        default="code_executor",
+        description="The ID of the code executor"
+    )
     base_image: str = Field(
         default="python:3.13.1-slim",
         description="Docker base image to use (e.g., 'python:3.11-slim')"

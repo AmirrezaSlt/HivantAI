@@ -37,6 +37,9 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = False
     state: Optional[Dict[str, Any]] = None
     attachments: Optional[Dict[str, bytes]] = None
+    show_thinking: Optional[bool] = True  # Add option to show thinking, default to True
+    show_tool_requests: Optional[bool] = True  # Add option to show tool requests, default to True
+    show_tool_responses: Optional[bool] = True  # Add option to show tool responses, default to True
 
 class ChatCompletionResponseChoice(BaseModel):
     index: int
@@ -80,7 +83,11 @@ def initialize_agent():
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             deployment_name="gpt-4o-default"
-        )
+        ),
+        MAX_ITERATIONS=10,
+        AGENT_NAME="Kubernetes Agent",
+        AGENT_ROLE="You are an AI assistant that tries to help the user with their Kubernetes problems.",
+        AGENT_PERMISSIONS=["kubernetes"]
     )
 
     retriever = Retriever(
@@ -192,7 +199,7 @@ async def chat_completions(
     # Handle streaming response
     if request.stream:
         async def stream_response():
-            # Generate a response ID
+            # Generate a response ID and timestamp
             response_id = f"chatcmpl-{datetime.now().timestamp()}"
             created_time = int(datetime.now().timestamp())
             
@@ -208,27 +215,139 @@ async def chat_completions(
             }
             yield f"data: {json.dumps(start_chunk)}\n\n"
             
-            # Get the full response from the agent
-            response_text, new_state = agent.respond(input=input_obj, state=state_to_use)
+            # Content buffer to accumulate the full response
+            content_buffer = ""
+            new_state = state_to_use
             
-            # Update global state
+            # Stream directly from the cognitive engine
+            # Remove the try-except block to let exceptions propagate
+            # This will show the full stack trace in the server logs
+            
+            # Get the input ready for the agent
+            reference_documents = agent.retriever.query_and_retrieve(query=input_obj.message) if agent.retriever else None
+            
+            # Get stream from cognitive engine
+            for chunk in agent.cognitive_engine.respond(
+                input=input_obj,
+                # reference_documents=reference_documents,
+                toolkit=agent.toolkit,
+                # state=state_to_use
+            ):
+                # Handle different types of chunks
+                if chunk["type"] == "thinking":
+                    # Only include thinking chunks if show_thinking is True
+                    if request.show_thinking:
+                        # Include thinking chunks in the stream with special formatting
+                        thinking_content = f"[THINKING] {chunk['content']}"
+                        
+                        # Add a marker if thinking is finished
+                        if chunk.get("finished", False):
+                            thinking_content += " [DONE]"
+                            
+                        sse_chunk = {
+                            "id": response_id,
+                            "created": created_time,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": thinking_content},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(sse_chunk)}\n\n"
+                
+                elif chunk["type"] == "tool_usage":
+                    # Only include tool request chunks if show_tool_requests is True
+                    if request.show_tool_requests:
+                        # Format tool request with special formatting
+                        tool_request_content = f"[TOOL REQUEST] {chunk['content']}"
+                        
+                        sse_chunk = {
+                            "id": response_id,
+                            "created": created_time,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": tool_request_content},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(sse_chunk)}\n\n"
+                
+                elif chunk["type"] == "tool_error" or chunk["type"] == "tool_response":
+                    # Only include tool response chunks if show_tool_responses is True
+                    if request.show_tool_responses:
+                        # Format tool response with special formatting
+                        prefix = "[TOOL ERROR]" if chunk["type"] == "tool_error" else "[TOOL RESPONSE]"
+                        tool_response_content = f"{prefix} {chunk['content']}"
+                        
+                        sse_chunk = {
+                            "id": response_id,
+                            "created": created_time,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": tool_response_content},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(sse_chunk)}\n\n"
+                
+                elif chunk["type"] == "answer":
+                    # For answer chunks, send them as delta content
+                    content = chunk["content"]
+                    content_buffer += content
+                    
+                    # Send the content as a delta
+                    sse_chunk = {
+                        "id": response_id,
+                        "created": created_time,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": content},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(sse_chunk)}\n\n"
+                
+                elif chunk["type"] == "error":
+                    # Handle error case
+                    error_chunk = {
+                        "id": response_id,
+                        "created": created_time,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": chunk["content"]},
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    yield f"data: {json.dumps(error_chunk)}\n\n"
+            
+            # Send final chunk with finish_reason
+            final_chunk = {
+                "id": response_id,
+                "created": created_time,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }]
+            }
+            yield f"data: {json.dumps(final_chunk)}\n\n"
+            
+            # Update the agent state with the full response
             agent_state = new_state
             
-            # Stream the content word by word
-            words = response_text.split()
-            for i, word in enumerate(words):
-                chunk = {
-                    "id": response_id,
-                    "created": created_time,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": word + (" " if i < len(words) - 1 else "")},
-                        "finish_reason": None if i < len(words) - 1 else "stop"
-                    }]
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
+            # End the response with a final chunk indicating completion
+            end_chunk = {
+                "id": response_id,
+                "created": created_time,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }]
+            }
+            yield f"data: {json.dumps(end_chunk)}\n\n"
             
-            # End the stream
+            # Add an explicit end signal to terminate the connection
             yield "data: [DONE]\n\n"
         
         return StreamingResponse(
@@ -236,7 +355,7 @@ async def chat_completions(
             media_type="text/event-stream"
         )
     
-    # Handle regular response
+    # Handle regular (non-streaming) response
     else:
         # Get response from agent
         response_text, new_state = agent.respond(input=input_obj, state=state_to_use)

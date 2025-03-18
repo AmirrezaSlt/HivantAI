@@ -8,9 +8,9 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def generate_response(self, messages: List[dict], max_tokens: int, temperature: float) -> Optional[str]:
+    def generate_response(self, messages: List[dict], *args, **kwargs) -> Optional[str]:
         pass
 
     @abstractmethod
-    def stream_response(self, messages: List[dict], max_tokens: int, temperature: float) -> Iterator[str]:
+    def stream_response(self, messages: List[dict], *args, **kwargs) -> Iterator[str]:
         pass

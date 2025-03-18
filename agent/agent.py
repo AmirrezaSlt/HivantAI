@@ -17,7 +17,7 @@ class Agent:
         if self.retriever:
             self.retriever.load_data_to_vector_db()
       
-    def respond(self, input: Input, state = None) -> tuple:
+    def respond(self, input: Input, state = None):
         """
         Process input and generate a response using the cognitive engine.
         
@@ -26,16 +26,13 @@ class Agent:
             state: Optional state from previous interactions
             
         Returns:
-            A tuple containing (response_text, updated_state)
+            When not streaming: A tuple containing (response_text, updated_state)
+            When streaming: A generator yielding response chunks
         """
-        reference_documents = self.retriever.query_and_retrieve(query=input.message) if self.retriever else None
         
-        response_text, updated_state = self.cognitive_engine.respond(
+        # Pass through the generator from cognitive_engine.respond
+        return self.cognitive_engine.respond(
             input=input,
-            reference_documents=reference_documents,
             toolkit=self.toolkit,
             state=state
         )
-        
-        # Return both the response text and the updated state
-        return response_text, updated_state

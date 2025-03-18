@@ -2,8 +2,9 @@ import io
 import contextlib
 import traceback
 from pydantic import BaseModel
-from typing import Optional, Type
-
+from typing import Optional, Type, Dict, Any
+from .tool import ToolInfo, BaseTool
+from .config import PythonCodeExecutorConfig
 class PythonCodeExecutionInput(BaseModel):
     code: str
     timeout: Optional[int] = 5
@@ -12,10 +13,11 @@ class PythonCodeExecutionResponse(BaseModel):
     output: str | None
     error: str | None
 
-class PythonCodeExecutor:
-    def __init__(self, config):
+class PythonCodeExecutor(BaseTool):
+    def __init__(self, config: PythonCodeExecutorConfig):
         self.config = config
-        
+        super().__init__(self.config.id)
+
     def execute(self, code, timeout: Optional[int] = 5) -> dict:
         """
         Attempt to mimic REPL behavior:
@@ -80,6 +82,13 @@ class PythonCodeExecutor:
             - print the data you need to have it in the output
             """
     
+    def _invoke(self, input_data: PythonCodeExecutionInput) -> dict:
+        """
+        Implementation of the abstract _invoke method required by BaseTool.
+        Delegates execution to the execute method.
+        """
+        return self.execute(input_data.code, input_data.timeout)
+        
     @property
     def input_model(self) -> Type[BaseModel]:
         return PythonCodeExecutionInput
@@ -97,3 +106,19 @@ class PythonCodeExecutor:
         Returns a description of the output format from code execution.
         """
         return PythonCodeExecutionResponse.model_json_schema()
+    
+    @property
+    def info(self) -> ToolInfo:
+        return ToolInfo(
+            description=self.description,
+            inputs=self.input_schema,
+            outputs=self.output_schema
+        )
+
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema
+        }

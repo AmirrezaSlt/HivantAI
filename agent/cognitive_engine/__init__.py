@@ -1,104 +1,168 @@
-from typing import List, Dict, Any, Tuple
-from pydantic import ValidationError
-from .models import ReasoningState, LLMResponse, ReasoningStepType, ToolUseResponseStep
+import json
+from typing import List
 from .config import CognitiveEngineConfig
 from agent.toolkit import Toolkit
 from agent.input import Input
 from agent.logger import logger
+from .response_parser import ResponseParser
+from .prompt_template import PromptTemplate
+from .memory import Memory
 
 class CognitiveEngine:
     def __init__(self, *args, **kwargs):
         self.config = CognitiveEngineConfig(*args, **kwargs)
+        self.name = self.config.AGENT_NAME
+        self.role = self.config.AGENT_ROLE
+        self.permissions = self.config.AGENT_PERMISSIONS
         self.provider = self.config.LLM_PROVIDER
-        self.system_prompt = self.config.SYSTEM_PROMPT or "You are an AI assistant."
-        logger.debug(f"CognitiveEngine initialized with system_prompt: {self.system_prompt}")
+        self.response_parser = ResponseParser
+        self.prompt_template = PromptTemplate(
+            name=self.name,
+            role=self.role,
+            permissions=self.permissions,
+        )
+        self.memory = Memory()
         
     def respond(self, 
             input: Input,
-            reference_documents: List[Dict[str, Any]] = None,
             toolkit: Toolkit = None,
-            state: ReasoningState = None
-        ) -> Tuple[str, ReasoningState]:
-        logger.debug(f"Input received: {input}")
-        if reference_documents:
-            logger.debug(f"Reference documents provided: {reference_documents}")
-        if toolkit:
-            logger.debug(f"Toolkit provided: {toolkit}")
-            
-        reasoning_state = state or ReasoningState(toolkit=toolkit, system_prompt=self.system_prompt)
-        reasoning_state.update_state_from_input(input, reference_documents)
-        logger.debug("Reasoning state updated from input.")
+        ):
+
+        self.prompt_template.set_toolkit(toolkit)
+        self.memory.conversation.add_message("user", input.message)
         
-        response = self._reason(reasoning_state, toolkit)
-        logger.debug("Response generation complete.")
-        return response, reasoning_state
+        yield from self._reason(self.prompt_template)
 
-    def _reason(self, reasoning_state: ReasoningState, toolkit: Toolkit) -> str:
-        logger.debug(f"Entering reasoning loop with current trail length: {len(reasoning_state.trail)}")
-        while len(reasoning_state.trail) < 15:
-            logger.debug(f"Sending message to LLM provider. Current trail length: {len(reasoning_state.trail)}")
-            response = self._send_message(reasoning_state.messages)
-            logger.debug(f"Received LLM response: {response}")
-            response_type = response.step.type
-            logger.debug(f"LLM response type received: {response_type}")
-            
-            reasoning_state.update_state_from_llm_response(response)
-            logger.debug(f"Reasoning state updated from LLM response. Trail length is now: {len(reasoning_state.trail)}")
-
-            if response_type == ReasoningStepType.TOOL_USE_REQUEST:
-                logger.debug(f"Tool use request detected for tool: {response.step.tool_name}")
-                
-                logger.info(f"Invoking tool: {response.step.tool_name} with input: {response.step.input_data}")
-                result = toolkit.invoke_tool(response.step.tool_name, response.step.input_data)
-                logger.info(f"Tool '{response.step.tool_name}' returned result: {result}")
-                logger.debug(f"Tool '{response.step.tool_name}' returned result: {result}")
-                
-                reasoning_state.add_tool_use_response(result)
-                logger.debug("Tool use response added to the reasoning state. Continuing reasoning loop.")
-                continue
-                
-            elif response_type == ReasoningStepType.CLARIFICATION:
-                logger.debug(f"Clarification request received: {response.step.clarification}")
-                return response.step.clarification
-            
-            elif response_type == ReasoningStepType.RESPONSE:
-                logger.debug(f"Final response obtained: {response.step.response}")
-                return response.step.response
-            
-            else:
-                logger.error(f"Unknown response type received from LLM: {response_type}")
-                raise ValueError(f"Unknown response type: {response_type}")
-
-        logger.warning("Reasoning loop exceeded maximum allowed iterations without producing a final response.")
-        raise RuntimeError("Reasoning loop exceeded maximum iterations without a final response.")
-
-    def _send_message(self, messages: List[dict]) -> Tuple[dict, str]:
-        logger.debug(f"Sending messages to LLM provider: {messages}")
+    def _reason(self, prompt_template: PromptTemplate):
+        """
+        Core reasoning method that processes LLM responses and handles different response types.
         
+        Args:
+            prompt_template: The prompt template with the system message.
+            
+        Yields:
+            Dict objects with different response types (thinking, answer, tool_usage, tool_error, error).
+        """
+        count = 0
+        while count < self.config.MAX_ITERATIONS:
+            count += 1
+            logger.debug(f"Starting reasoning iteration {count}")
+            
+            with self.response_parser() as parser:
+                # Construct messages for LLM
+                messages = [{
+                    "role": "system",
+                    "content": prompt_template.system_prompt,
+                }, *self.memory.conversation.messages]
+                
+                logger.debug(f"Sending system prompt: {prompt_template.system_prompt[:200]}...")
+                
+                # Process the LLM response
+                self._get_response(messages, parser)
+                
+                # Get tag, data, and finished flag from parser
+                tag, data, finished = parser.get_parsed_response()
+                logger.debug(f"Parser response: tag={tag}, finished={finished}, data={data[:100] if isinstance(data, str) else data}")
+                
+                # Handle different types of chunks
+                if tag == "thinking":
+                    # Stream thinking for real-time feedback
+                    yield {"type": "thinking", "content": data, "finished": finished}
+                    
+                    # If the thinking is finished, add to memory and continue to next iteration
+                    if finished:
+                        self.memory.conversation.add_message("assistant", f"[Thinking] {data}")
+                        logger.debug("Thinking phase complete, continuing to next iteration")
+                        # Continue to next iteration to get final answer
+                        continue
+                
+                elif tag == "answer":
+                    # Stream answer content
+                    yield {"type": "answer", "content": data, "finished": finished}
+                    
+                    # If the answer is finished, add to memory and end generation
+                    if finished:
+                        self.memory.conversation.add_message("assistant", data)
+                        logger.debug("Answer complete, returning response")
+                        return
+                
+                elif tag == "tool" and finished:
+                    # Process tool usage
+                    toolkit = prompt_template.toolkit
+                    if toolkit:
+                        try:
+                            # Better handling of tool data which could be a string or a dict
+                            if isinstance(data, dict) and "name" in data and "args" in data:
+                                # Valid tool data structure
+                                tool_name = data["name"]
+                                tool_args = data["args"]
+                                if isinstance(tool_args, str):
+                                    # Try to parse string args as JSON
+                                    try:
+                                        tool_args = json.loads(tool_args)
+                                    except json.JSONDecodeError:
+                                        # If parsing fails, use as-is
+                                        pass
+                                
+                                output = toolkit.invoke(tool_name, tool_args)
+                                # Convert output to string if it's a dictionary
+                                if isinstance(output, dict):
+                                    output_str = json.dumps(output)
+                                else:
+                                    output_str = str(output)
+                                self.memory.conversation.add_message("system", output_str)
+                                
+                                # First yield a tool request chunk
+                                tool_request_msg = f"Using tool: {tool_name}"
+                                if isinstance(tool_args, dict):
+                                    tool_request_msg += f" with args: {json.dumps(tool_args)}"
+                                yield {"type": "tool_usage", "content": tool_request_msg}
+                                
+                                # Then yield a tool response chunk with the output
+                                yield {"type": "tool_response", "content": output_str}
+                                logger.debug(f"Tool {tool_name} executed successfully")
+                            else:
+                                # Invalid tool data structure
+                                error_msg = f"Invalid tool format: {data}"
+                                self.memory.conversation.add_message("system", error_msg)
+                                yield {"type": "tool_error", "content": error_msg}
+                                logger.error(f"Tool execution error: {error_msg}")
+                        except Exception as e:
+                            # Safe error reporting that doesn't assume data structure
+                            tool_name = data["name"] if isinstance(data, dict) and "name" in data else "unknown"
+                            error_msg = f"Error using tool {tool_name}: {str(e)}"
+                            self.memory.conversation.add_message("system", error_msg)
+                            yield {"type": "tool_error", "content": error_msg}
+                            logger.error(f"Tool execution error: {error_msg}")
+                    else:
+                        error_msg = "Tool requested but no toolkit available"
+                        self.memory.conversation.add_message("system", error_msg)
+                        yield {"type": "tool_error", "content": error_msg}
+                        logger.warning("Tool requested with no toolkit available")
+                
+                # If we have a raw response or unfinished content, continue to next iteration
+                elif tag == "raw" or not finished:
+                    logger.debug(f"No conclusive result in iteration {count}, continuing...")
+                    continue
+        
+        # If we reach here, we've hit the maximum iterations
+        logger.warning(f"Maximum reasoning iterations ({self.config.MAX_ITERATIONS}) reached without conclusive answer")
+        yield {"type": "error", "content": "Maximum reasoning iterations reached without conclusive answer."}
+
+    def _get_response(self, messages: List[dict], parser: ResponseParser):     
         if self.provider.supports_streaming:
-            logger.debug("Using streaming response generation")
-            # Accumulate streamed chunks into full response
-            full_response = ""
+            logger.debug("Using streaming response")
             for chunk in self.provider.stream_response(
                 messages=messages,
-                max_tokens=1000,
-                temperature=0.7
+                max_tokens=self.config.MAX_TOKENS,
+                temperature=self.config.TEMPERATURE
             ):
-                full_response += chunk
-            response = full_response
+                events = parser.feed(chunk)
         else:
-            logger.debug("Using standard response generation")
+            logger.debug("Using non-streaming response")
             response = self.provider.generate_response(
                 messages=messages,
-                max_tokens=1000,
-                temperature=0.7
+                max_tokens=self.config.MAX_TOKENS,
+                temperature=self.config.TEMPERATURE
             )
-            
-        logger.debug(f"Raw response from LLM provider: {response}")
-        try:
-            parsed_response = LLMResponse.model_validate_json(response)
-            logger.debug(f"Parsed LLM response: {parsed_response}")
-        except ValidationError as e:
-            logger.error(f"Failed to parse LLM response. Error: {e}. Raw response: {response}")
-            raise ValueError(f"Failed to parse LLM response: {e}")
-        return parsed_response
+            events = parser.feed(response)

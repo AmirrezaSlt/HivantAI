@@ -13,39 +13,19 @@ class Toolkit:
 
         self.code_executor = PythonCodeExecutor(self._config.EXECUTOR) if self._config.EXECUTOR else None
 
-    def to_prompt(self) -> str:
+    @property
+    def info(self) -> Dict[str, Any]:
         """
-        Returns a description of the toolkit's capabilities as a prompt
-        to inform the model about available tools and code execution functionality.
+        Returns a description of the toolkit's capabilities.
         """
-        tool_descriptions = []
-        
-        for tool_id, tool in self.tools.items():
-            tool_descriptions.append(f"""
-                Tool Name: {tool_id}
-                Description: {tool.description}
-                Input Schema: {json.dumps(tool.input_schema, indent=2)}
-                Output Schema: {json.dumps(tool.output_schema, indent=2)}
-            """)
-
+        info = {}
+        for tool_name, tool in self.tools.items():
+            info[tool_name] = tool.info
         if self.code_executor:
-            tool_descriptions.append(f"""
-                Tool Name: code_executor
-                Description: {self.code_executor.description}
-                Input Schema: {self.code_executor.input_schema}
-                Output Schema: {self.code_executor.output_schema}
-            """)
-
-        tools_text = "\n\n".join(tool_descriptions) if tool_descriptions else "No tools configured"
-        
-        return f"""Available Tools: 
-        {tools_text}
-
-            To use a tool, provide the tool name and the required inputs according to the input schema.
-            Each tool will return outputs matching its output schema.
-        """
+            info["code_executor"] = self.code_executor.info
+        return info
     
-    def invoke_tool(self, tool_name: str, input: Dict[str, Any]) -> Dict[str, Any]:
+    def invoke(self, tool_name: str, input: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_name)
         if tool_name == "code_executor":
             input = self.code_executor.input_model(**input)

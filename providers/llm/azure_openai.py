@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, List, Iterator
 import requests
 from agent.cognitive_engine.llm import BaseLLMProvider
@@ -39,13 +40,17 @@ class AzureOpenAILLMProvider(BaseLLMProvider):
             "stream": True
         }
         
-        response = requests.post(
-            self.api_url,
-            headers=headers,
-            json=payload,
-            stream=True
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                stream=True
+            )
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            logging.error(f"API ERROR: {e.response.text}")
+            raise
 
         for line in response.iter_lines():
             if not line:
