@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Dict, Any, Optional
 from .config import CognitiveEngineConfig
 from agent.toolkit import Toolkit
 from agent.input import Input
@@ -26,11 +26,23 @@ class CognitiveEngine:
     def respond(self, 
             input: Input,
             toolkit: Toolkit = None,
+            state = None,
         ):
-
+        """
+        Core method that processes user input and produces reasoning events.
+        
+        Args:
+            input: The user input message and attachments
+            toolkit: Optional toolkit for tool usage
+            state: Optional state from previous interactions
+            
+        Yields:
+            Raw reasoning events to be processed by the agent
+        """
         self.prompt_template.set_toolkit(toolkit)
         self.memory.conversation.add_message("user", input.message)
         
+        # Directly yield events from the reasoning process
         yield from self._reason(self.prompt_template)
 
     def _reason(self, prompt_template: PromptTemplate):
@@ -48,108 +60,100 @@ class CognitiveEngine:
             count += 1
             logger.debug(f"Starting reasoning iteration {count}")
             
-            with self.response_parser() as parser:
-                # Construct messages for LLM
-                messages = [{
-                    "role": "system",
-                    "content": prompt_template.system_prompt,
-                }, *self.memory.conversation.messages]
+            messages = [{
+                "role": "system",
+                "content": prompt_template.system_prompt,
+            }, *self.memory.conversation.messages]
+            
+            logger.debug(f"Sending system prompt: {prompt_template.system_prompt}...")
+            
+            parser = self.response_parser()
+            
+            for event in self._get_response(messages, parser):
+                tag = event["type"]
+                data = event["content"]
+                finished = event["finished"]
                 
-                logger.debug(f"Sending system prompt: {prompt_template.system_prompt[:200]}...")
+                logger.debug(f"Parser event: type={tag}, finished={finished}")
                 
-                # Process the LLM response
-                self._get_response(messages, parser)
-                
-                # Get tag, data, and finished flag from parser
-                tag, data, finished = parser.get_parsed_response()
-                logger.debug(f"Parser response: tag={tag}, finished={finished}, data={data[:100] if isinstance(data, str) else data}")
-                
-                # Handle different types of chunks
                 if tag == "thinking":
-                    # Stream thinking for real-time feedback
                     yield {"type": "thinking", "content": data, "finished": finished}
                     
-                    # If the thinking is finished, add to memory and continue to next iteration
                     if finished:
                         self.memory.conversation.add_message("assistant", f"[Thinking] {data}")
-                        logger.debug("Thinking phase complete, continuing to next iteration")
-                        # Continue to next iteration to get final answer
-                        continue
-                
+                        logger.debug("Thinking phase complete")
+
                 elif tag == "answer":
-                    # Stream answer content
                     yield {"type": "answer", "content": data, "finished": finished}
                     
-                    # If the answer is finished, add to memory and end generation
                     if finished:
                         self.memory.conversation.add_message("assistant", data)
                         logger.debug("Answer complete, returning response")
                         return
                 
                 elif tag == "tool" and finished:
-                    # Process tool usage
                     toolkit = prompt_template.toolkit
                     if toolkit:
                         try:
-                            # Better handling of tool data which could be a string or a dict
                             if isinstance(data, dict) and "name" in data and "args" in data:
-                                # Valid tool data structure
                                 tool_name = data["name"]
                                 tool_args = data["args"]
-                                if isinstance(tool_args, str):
-                                    # Try to parse string args as JSON
-                                    try:
-                                        tool_args = json.loads(tool_args)
-                                    except json.JSONDecodeError:
-                                        # If parsing fails, use as-is
-                                        pass
+                                try:
+                                    # If tool_args is a string that looks like JSON, parse it
+                                    if isinstance(tool_args, str):
+                                        if tool_args.strip().startswith('{') and tool_args.strip().endswith('}'):
+                                            tool_args = json.loads(tool_args)
+                                    # If it's already a dict, use it directly
+                                except json.JSONDecodeError:
+                                    raise ValueError(f"Invalid tool format: {data}")
                                 
+                                # Prepare the tool request with full JSON content for <tool> tag
+                                tool_json = json.dumps({"name": tool_name, "args": tool_args})
+                                yield {"type": "tool", "content": tool_json, "finished": True}
+                                
+                                # Execute the tool
                                 output = toolkit.invoke(tool_name, tool_args)
-                                # Convert output to string if it's a dictionary
                                 if isinstance(output, dict):
                                     output_str = json.dumps(output)
                                 else:
                                     output_str = str(output)
-                                self.memory.conversation.add_message("system", output_str)
                                 
-                                # First yield a tool request chunk
-                                tool_request_msg = f"Using tool: {tool_name}"
-                                if isinstance(tool_args, dict):
-                                    tool_request_msg += f" with args: {json.dumps(tool_args)}"
-                                yield {"type": "tool_usage", "content": tool_request_msg}
+                                self.memory.conversation.add_message("system", f"<tool_response>{output_str}</tool_response>")
+                                yield {"type": "tool_response", "content": output_str, "finished": True}
                                 
-                                # Then yield a tool response chunk with the output
-                                yield {"type": "tool_response", "content": output_str}
                                 logger.debug(f"Tool {tool_name} executed successfully")
                             else:
-                                # Invalid tool data structure
                                 error_msg = f"Invalid tool format: {data}"
                                 self.memory.conversation.add_message("system", error_msg)
-                                yield {"type": "tool_error", "content": error_msg}
+                                yield {"type": "tool_error", "content": error_msg, "finished": True}
                                 logger.error(f"Tool execution error: {error_msg}")
                         except Exception as e:
-                            # Safe error reporting that doesn't assume data structure
                             tool_name = data["name"] if isinstance(data, dict) and "name" in data else "unknown"
                             error_msg = f"Error using tool {tool_name}: {str(e)}"
                             self.memory.conversation.add_message("system", error_msg)
-                            yield {"type": "tool_error", "content": error_msg}
+                            yield {"type": "tool_error", "content": error_msg, "finished": True}
                             logger.error(f"Tool execution error: {error_msg}")
                     else:
                         error_msg = "Tool requested but no toolkit available"
                         self.memory.conversation.add_message("system", error_msg)
-                        yield {"type": "tool_error", "content": error_msg}
+                        yield {"type": "tool_error", "content": error_msg, "finished": True}
                         logger.warning("Tool requested with no toolkit available")
-                
-                # If we have a raw response or unfinished content, continue to next iteration
-                elif tag == "raw" or not finished:
-                    logger.debug(f"No conclusive result in iteration {count}, continuing...")
-                    continue
         
         # If we reach here, we've hit the maximum iterations
         logger.warning(f"Maximum reasoning iterations ({self.config.MAX_ITERATIONS}) reached without conclusive answer")
-        yield {"type": "error", "content": "Maximum reasoning iterations reached without conclusive answer."}
+        yield {"type": "error", "content": "Maximum reasoning iterations reached without conclusive answer.", "finished": True}
 
     def _get_response(self, messages: List[dict], parser: ResponseParser):     
+        """
+        Get a response from the LLM provider and parse it.
+        
+        Args:
+            messages: List of message dictionaries to send to the LLM.
+            parser: The ResponseParser instance to use for parsing.
+            
+        Yields:
+            Event dictionaries with type, content, and finished fields.
+        """
         if self.provider.supports_streaming:
             logger.debug("Using streaming response")
             for chunk in self.provider.stream_response(
@@ -157,7 +161,10 @@ class CognitiveEngine:
                 max_tokens=self.config.MAX_TOKENS,
                 temperature=self.config.TEMPERATURE
             ):
+                # Parse the chunk and yield any events
                 events = parser.feed(chunk)
+                for event in events:
+                    yield event
         else:
             logger.debug("Using non-streaming response")
             response = self.provider.generate_response(
@@ -165,4 +172,7 @@ class CognitiveEngine:
                 max_tokens=self.config.MAX_TOKENS,
                 temperature=self.config.TEMPERATURE
             )
+            # Process the full response
             events = parser.feed(response)
+            for event in events:
+                yield event

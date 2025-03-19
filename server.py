@@ -9,6 +9,7 @@ import json
 import asyncio
 from datetime import datetime
 from contextlib import asynccontextmanager
+from agent.logger import logger
 
 # Import agent components
 from agent.agent import Agent
@@ -215,112 +216,105 @@ async def chat_completions(
             }
             yield f"data: {json.dumps(start_chunk)}\n\n"
             
-            # Content buffer to accumulate the full response
-            content_buffer = ""
-            new_state = state_to_use
-            
-            # Stream directly from the cognitive engine
-            # Remove the try-except block to let exceptions propagate
-            # This will show the full stack trace in the server logs
-            
             # Get the input ready for the agent
-            reference_documents = agent.retriever.query_and_retrieve(query=input_obj.message) if agent.retriever else None
+            if agent.retriever:
+                agent.retriever.query_and_retrieve(query=input_obj.message)
             
-            # Get stream from cognitive engine
-            for chunk in agent.cognitive_engine.respond(
-                input=input_obj,
-                # reference_documents=reference_documents,
-                toolkit=agent.toolkit,
-                # state=state_to_use
-            ):
-                # Handle different types of chunks
-                if chunk["type"] == "thinking":
-                    # Only include thinking chunks if show_thinking is True
-                    if request.show_thinking:
-                        # Include thinking chunks in the stream with special formatting
-                        thinking_content = f"[THINKING] {chunk['content']}"
-                        
-                        # Add a marker if thinking is finished
-                        if chunk.get("finished", False):
-                            thinking_content += " [DONE]"
-                            
-                        sse_chunk = {
-                            "id": response_id,
-                            "created": created_time,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": thinking_content},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(sse_chunk)}\n\n"
+            # Process and stream the response
+            try:
+                # Track content for each tag type to handle closing tags properly
+                tag_content = {}
                 
-                elif chunk["type"] == "tool_usage":
-                    # Only include tool request chunks if show_tool_requests is True
-                    if request.show_tool_requests:
-                        # Format tool request with special formatting
-                        tool_request_content = f"[TOOL REQUEST] {chunk['content']}"
-                        
-                        sse_chunk = {
-                            "id": response_id,
-                            "created": created_time,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": tool_request_content},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(sse_chunk)}\n\n"
-                
-                elif chunk["type"] == "tool_error" or chunk["type"] == "tool_response":
-                    # Only include tool response chunks if show_tool_responses is True
-                    if request.show_tool_responses:
-                        # Format tool response with special formatting
-                        prefix = "[TOOL ERROR]" if chunk["type"] == "tool_error" else "[TOOL RESPONSE]"
-                        tool_response_content = f"{prefix} {chunk['content']}"
-                        
-                        sse_chunk = {
-                            "id": response_id,
-                            "created": created_time,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": tool_response_content},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(sse_chunk)}\n\n"
-                
-                elif chunk["type"] == "answer":
-                    # For answer chunks, send them as delta content
+                for chunk in agent.respond(input=input_obj):
+                    tag = chunk["type"]
                     content = chunk["content"]
-                    content_buffer += content
+                    finished = chunk.get("finished", False)
                     
-                    # Send the content as a delta
+                    # Skip chunks the user doesn't want to see
+                    if (tag == "thinking" and not request.show_thinking or
+                        tag == "tool" and not request.show_tool_requests or
+                        (tag in ["tool_response", "tool_error"] and not request.show_tool_responses)):
+                        continue
+                    
+                    # Format the content with appropriate tags
+                    formatted_content = ""
+                    
+                    # Special handling for XML tag formatting
+                    if tag == "thinking":
+                        # Initialize if first chunk of this tag type
+                        if tag not in tag_content:
+                            tag_content[tag] = ""
+                            formatted_content = "<thinking>"
+                        
+                        # Add the content
+                        formatted_content += content
+                        tag_content[tag] += content
+                        
+                        # Close tag if finished
+                        if finished:
+                            formatted_content += "</thinking>"
+                            tag_content.pop(tag, None)
+                    
+                    elif tag in ["tool", "tool_response", "tool_error"]:
+                        # These are always complete chunks with their own tags
+                        tag_open = f"<{tag}>"
+                        tag_close = f"</{tag}>"
+                        formatted_content = f"{tag_open}{content}{tag_close}"
+                    
+                    elif tag == "error":
+                        formatted_content = f"<e>{content}</e>"
+                    
+                    else:  # answer type
+                        formatted_content = content
+                    
+                    # Only send if there's actual content
+                    if formatted_content:
+                        sse_chunk = {
+                            "id": response_id,
+                            "created": created_time,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": formatted_content},
+                                "finish_reason": "stop" if tag == "error" and finished else None
+                            }]
+                        }
+                        yield f"data: {json.dumps(sse_chunk)}\n\n"
+                
+                # Close any remaining open tags (in case of unexpected termination)
+                for tag, content in tag_content.items():
+                    close_tag = f"</{tag}>"
                     sse_chunk = {
                         "id": response_id,
                         "created": created_time,
                         "choices": [{
                             "index": 0,
-                            "delta": {"content": content},
+                            "delta": {"content": close_tag},
                             "finish_reason": None
                         }]
                     }
                     yield f"data: {json.dumps(sse_chunk)}\n\n"
+                        
+            except Exception as e:
+                # Log the error
+                logger.exception("Error during streaming response")
                 
-                elif chunk["type"] == "error":
-                    # Handle error case
-                    error_chunk = {
-                        "id": response_id,
-                        "created": created_time,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"content": chunk["content"]},
-                            "finish_reason": "stop"
-                        }]
-                    }
-                    yield f"data: {json.dumps(error_chunk)}\n\n"
+                # Send an error message to the client
+                error_message = str(e)
+                if "429" in error_message:
+                    error_message = "Azure OpenAI API rate limit exceeded. Please try again later."
+                
+                error_chunk = {
+                    "id": response_id,
+                    "created": created_time,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": f"<e>{error_message}</e>"},
+                        "finish_reason": "stop"
+                    }]
+                }
+                yield f"data: {json.dumps(error_chunk)}\n\n"
             
-            # Send final chunk with finish_reason
+            # Send a single final chunk with finish_reason
             final_chunk = {
                 "id": response_id,
                 "created": created_time,
@@ -332,22 +326,7 @@ async def chat_completions(
             }
             yield f"data: {json.dumps(final_chunk)}\n\n"
             
-            # Update the agent state with the full response
-            agent_state = new_state
-            
-            # End the response with a final chunk indicating completion
-            end_chunk = {
-                "id": response_id,
-                "created": created_time,
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop"
-                }]
-            }
-            yield f"data: {json.dumps(end_chunk)}\n\n"
-            
-            # Add an explicit end signal to terminate the connection
+            # Add an explicit end signal
             yield "data: [DONE]\n\n"
         
         return StreamingResponse(
