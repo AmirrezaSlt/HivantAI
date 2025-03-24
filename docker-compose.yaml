@@ -2,7 +2,7 @@ services:
   agent:
     build: .
     container_name: agent
-    command: python server.py
+    command: python main.py
     stdin_open: true
     tty: true
     ports:
@@ -12,7 +12,7 @@ services:
     volumes:
       - ./agent:/llm/agent
       - ./providers:/llm/providers
-      - ./server.py:/llm/server.py
+      - ./main.py:/llm/main.py
       - ~/.kube/config:/root/.kube/config
       - ./data/logs:/var/log/agent
 

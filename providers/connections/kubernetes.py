@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from kubernetes import client, config
+from server import client, config
 from agent.connections import BaseConnection
 
 class KubernetesConnection(BaseConnection):

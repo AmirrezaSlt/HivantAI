@@ -3,8 +3,9 @@ import contextlib
 import traceback
 from pydantic import BaseModel
 from typing import Optional, Type, Dict, Any
-from .tool import ToolInfo, BaseTool
+from .tool import BaseTool
 from .config import PythonCodeExecutorConfig
+
 class PythonCodeExecutionInput(BaseModel):
     code: str
     timeout: Optional[int] = 5
@@ -18,7 +19,7 @@ class PythonCodeExecutor(BaseTool):
         self.config = config
         super().__init__(self.config.id)
 
-    def execute(self, code, timeout: Optional[int] = 5) -> dict:
+    def _invoke(self, inputs: PythonCodeExecutionInput) -> dict:
         """
         Attempt to mimic REPL behavior:
         - If the provided code is a single expression, evaluate it (using eval)
@@ -26,6 +27,8 @@ class PythonCodeExecutor(BaseTool):
         - Otherwise, execute it as a script (using exec).
         Standard output and standard error are captured and returned.
         """
+        code = inputs.code
+        
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
 
@@ -56,10 +59,6 @@ class PythonCodeExecutor(BaseTool):
 
     @property
     def description(self) -> str:
-        """
-        Returns a description of the executor's capabilities as a prompt
-        to inform the model about available code execution functionality.
-        """
         packages = self.config.python_packages
         package_list = ", ".join(packages) if packages else "no additional packages"
         
@@ -67,58 +66,33 @@ class PythonCodeExecutor(BaseTool):
         env_vars_list = "\n    ".join(env_vars) if env_vars else "none configured"
         
         return f"""
-            Python Code Execution Environment:
-            - Python version: {self.config.python_version}
-            - Base image: {self.config.base_image}
-            - Python packages: {package_list}
-            - System packages: {', '.join(self.config.system_packages) if self.config.system_packages else 'none'}
-            - Resource limits: CPU {self.config.resource_limits['cpu']}, Memory {self.config.resource_limits['memory']}
-            - Environment variables: {env_vars_list}
+        Executes Python code in a sandboxed environment.
 
-            Capabilities:
-            - Executes Python code snippets
-            - Captures stdout/stderr
-            - Do not use any comments
-            - print the data you need to have it in the output
-            """
+        Environment:
+        - Python version: {self.config.python_version}
+        - Base image: {self.config.base_image}
+        - Available packages: {package_list}
+        - System packages: {', '.join(self.config.system_packages) if self.config.system_packages else 'none'}
+        - Resource limits: CPU {self.config.resource_limits['cpu']}, Memory {self.config.resource_limits['memory']}
+        - Environment variables: {env_vars_list}
+
+        Inputs:
+        - code: (required) Python code to execute as a string
+        - timeout: (optional, default=5) Maximum execution time in seconds
+
+        Returns:
+        A dictionary containing:
+        - output: captured stdout from code execution (string or null)
+        - error: captured stderr or error messages if any (string or null)
+
+        Usage Tips:
+        - Do not use comments in the code
+        - Use print() for any data you need in the output
+        - Code is executed in a fresh environment each time
+        - For expressions (e.g., '2 + 2'), the result will be automatically printed
+        - For statements (e.g., 'x = 1'), use print() to see results
+        """
     
-    def _invoke(self, input_data: PythonCodeExecutionInput) -> dict:
-        """
-        Implementation of the abstract _invoke method required by BaseTool.
-        Delegates execution to the execute method.
-        """
-        return self.execute(input_data.code, input_data.timeout)
-        
     @property
     def input_model(self) -> Type[BaseModel]:
         return PythonCodeExecutionInput
-            
-    @property
-    def input_schema(self) -> str:
-        """
-        Returns a description of the expected input format for code execution.
-        """
-        return PythonCodeExecutionInput.model_json_schema()
-            
-    @property
-    def output_schema(self) -> str:
-        """
-        Returns a description of the output format from code execution.
-        """
-        return PythonCodeExecutionResponse.model_json_schema()
-    
-    @property
-    def info(self) -> ToolInfo:
-        return ToolInfo(
-            description=self.description,
-            inputs=self.input_schema,
-            outputs=self.output_schema
-        )
-
-    def __dict__(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "description": self.description,
-            "input_schema": self.input_schema,
-            "output_schema": self.output_schema
-        }

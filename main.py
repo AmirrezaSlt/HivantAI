@@ -1,23 +1,23 @@
 import os
-import sys
+
+# Import agent components
 from agent.agent import Agent
-from typing import Dict, Any
-from providers.llm.azure_openai import AzureOpenAILLMProvider
-from providers.embeddings.azure_openai import AzureOpenAIEmbeddingProvider
-from providers.connections.kubernetes import KubernetesConnection
-from providers.vector_dbs.qdrant import QdrantVectorDB
-from agent.retriever.reference_documents.text_file import TextFileReferenceDocument
 from agent.cognitive_engine import CognitiveEngine
 from agent.retriever import Retriever
 from agent.toolkit import Toolkit
-from agent.agent import Agent
-from agent.input import Input
 from agent.toolkit.config import PythonCodeExecutorConfig
-import json 
-def main():
 
-    kubernetes_conn = KubernetesConnection.get_connection()
+# Import providers
+from providers.llm.azure_openai import AzureOpenAILLMProvider
+from providers.embeddings.azure_openai import AzureOpenAIEmbeddingProvider
 
+def create_agent():
+    """
+    Create and initialize the agent with configurations.
+    
+    Returns:
+        Agent: The initialized agent instance
+    """
     cognitive_engine = CognitiveEngine(
         SYSTEM_PROMPT="""
         You are an AI assistant that tries to help the user with their Kubernetes problems. 
@@ -30,32 +30,13 @@ def main():
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             deployment_name="gpt-4o-default"
-        )
+        ),
+        MAX_ITERATIONS=10,
+        AGENT_NAME="Kubernetes Agent",
+        AGENT_ROLE="You are an AI assistant that tries to help the user with their Kubernetes problems.",
+        AGENT_PERMISSIONS=["kubernetes"]
     )
 
-    retriever = Retriever(
-        NUM_REFERENCE_DOCUMENTS=3,
-        EMBEDDING_PROVIDER=AzureOpenAIEmbeddingProvider(
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            deployment_name="text-embedding-3-small",
-            dimension=1536
-        ),
-        VECTOR_DB=QdrantVectorDB(
-            dimension=1536,
-            in_memory=True,
-            host="vector-db",
-            port=6333,
-            collection="default",
-            score_threshold=0.0,
-            similarity_metric="Cosine"
-        ),
-        # REFERENCE_DOCUMENTS=[
-        #     TextFileReferenceDocument(id="kubectl_debug_guide", file_path="providers/data/kubectl_debug.txt"),
-        #     TextFileReferenceDocument(id="contact", file_path="providers/data/contact.txt")
-        # ]
-    )
-    
     toolkit = Toolkit(
         TOOLS=[],
         EXECUTOR=PythonCodeExecutorConfig(
@@ -75,49 +56,28 @@ def main():
         )
     )
 
-    state = None
     agent = Agent(
         cognitive_engine=cognitive_engine,
-        retriever=retriever,
+        retriever=None,
         toolkit=toolkit
     )
     agent.setup()
+    # Uncomment if you want to load vector DB data on startup
     # agent.load_data_to_vector_db()
-    print("Agent initialized. Type 'quit' or 'exit' to end the conversation.")
-    print("\nYou: ", end='', flush=True)
-
-    try:
-        with open("providers/data/kubectl_guide.txt", "rb") as f:
-            kubectl_guide_content = f.read()
-        
-        for line in sys.stdin:
-            user_input = line.strip()
-            
-            if user_input.lower() in ['quit', 'exit']:
-                break
-            elif not user_input:
-                print("\nYou: ", end='', flush=True)
-                continue
-
-            attachments = {
-                "kubectl_guide.txt": kubectl_guide_content
-            }
-            response, state = agent.respond(
-                input=Input(message=user_input, attachments=attachments), 
-                state=state
-            )
-            with open("state.json", "w") as f:
-                json_list = "\n".join([str(step.model_dump_json()) for step in state.trail])
-                f.write(json_list)
-            print(f"\nAssistant: {response}")
-            print("\nYou: ", end='', flush=True)
-
-    except KeyboardInterrupt:
-        print("\nExiting...")
-    except EOFError:
-        print("\nInput stream closed. Exiting...")
     
-    sys.exit(0)
+    return agent
+
+def main():
+    """
+    Main entry point for the application.
+    Creates the agent and starts the server.
+    """
+    # Create and initialize agent
+    agent = create_agent()
+    print("Agent initialized successfully")
+    
+    # Start the server
+    agent.start_server(host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    main()
+    main() 

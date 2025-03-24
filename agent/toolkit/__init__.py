@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Generator
 from .config import ToolkitConfig
 from .tool import BaseTool
 from .executor import PythonCodeExecutor
@@ -12,25 +12,48 @@ class Toolkit:
         }
 
         self.code_executor = PythonCodeExecutor(self._config.EXECUTOR) if self._config.EXECUTOR else None
-
-    @property
-    def info(self) -> Dict[str, Any]:
-        """
-        Returns a description of the toolkit's capabilities.
-        """
-        info = {}
-        for tool_name, tool in self.tools.items():
-            info[tool_name] = tool.info
+        
+        # Add code_executor to the tools dictionary if it exists
         if self.code_executor:
-            info["code_executor"] = self.code_executor.info
-        return info
-    
+            self.tools[self.code_executor.id] = self.code_executor
+
     def invoke(self, tool_name: str, input: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Synchronously invoke a tool and return the complete result.
+        """
         tool = self.tools.get(tool_name)
-        if tool_name == "code_executor":
-            input = self.code_executor.input_model(**input)
-            return self.code_executor.execute(**input.model_dump())
-        elif tool:
-            return tool.invoke(input)
+
+        return tool.invoke(**input)
+            
+    def invoke_stream(self, tool_name: str, input: Dict[str, Any]) -> Generator[Dict[str, Any], None, None]:
+        """
+        Invoke a tool with streaming support, yielding partial results as they become available.
+        
+        Args:
+            tool_name: Name of the tool to invoke
+            input: Arguments to pass to the tool
+            
+        Yields:
+            Partial results from the tool as they become available
+            
+        Raises:
+            ValueError: If the tool is not found
+        """
+        tool = self.tools.get(tool_name)
+        if tool.supports_streaming:
+            yield from tool.invoke_stream(**input)
         else:
-            raise ValueError(f"Tool {tool_name} not found")
+            result = tool.invoke(**input)
+            yield result
+            
+    def supports_streaming(self, tool_name: str) -> bool:
+        """
+        Check if a specific tool supports streaming.
+        
+        Args:
+            tool_name: Name of the tool to check
+            
+        Returns:
+            True if the tool supports streaming, False otherwise
+        """
+        return self.tools[tool_name].supports_streaming

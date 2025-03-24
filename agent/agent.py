@@ -40,6 +40,21 @@ class Agent:
             )
         )
     
+    def start_server(self, host="0.0.0.0", port=8000):
+        """
+        Start the agent server.
+        
+        Args:
+            host: The host to bind the server to
+            port: The port to bind the server to
+            
+        Returns:
+            None
+        """
+        from .server import AgentServer
+        server = AgentServer(self)
+        server.start(host=host, port=port)
+    
     def buffer_events(self, events_generator: Generator) -> Generator[Dict[str, Any], None, None]:
         """
         Buffers events from the cognitive engine for more efficient streaming.

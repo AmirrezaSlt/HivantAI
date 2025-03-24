@@ -12,7 +12,7 @@ class PromptTemplate:
         self.name = name
         self.role = role
         self.permissions = permissions
-        self.tools = toolkit.info if toolkit else {}
+        self.tools = toolkit if toolkit else {}
         self.toolkit = toolkit
     
     def set_toolkit(self, toolkit):
@@ -22,46 +22,33 @@ class PromptTemplate:
         Args:
             toolkit: Toolkit instance containing available tools
         """
-        self.tools = toolkit.info if toolkit else {}
+        self.toolkit = toolkit
         self.toolkit = toolkit
         
-    def add_message(self, role, content):
-        """
-        This method is called by CognitiveEngine to track messages.
-        In this implementation, it does nothing as we don't need to store 
-        these messages in the prompt template.
-        """
-        pass
-
     def render(self):
         """Render the template with the current values."""
         template_str = """
-      Your name is {{ name }}, you are an AI agent charged with:
-      {{ role }}
-      You are given the following permissions:
-      {{ permissions }}
-      {% if tools %}
-      You have access to the following tools:
-      {% for tool_name, tool_info in tools.items() %}
-      - {{ tool_name }}: {{ tool_info.description }}
-        {% if tool_info.parameters %}
-        Parameters:
-        {% for param_name, param_info in tool_info.parameters.items() %}
-        - {{ param_name }} ({{ param_info.type }}, {% if param_info.required %}required{% else %}optional{% endif %}): {{ param_info.description }}
+        Your name is {{ name }}, you are an AI agent charged with:
+        {{ role }}
+        You are given the following permissions:
+        {{ permissions }}
+        {% if toolkit %}
+        You have access to the following tools:
+        {% for tool_id, tool in toolkit.tools.items() %}
+        - tool_id: "{{ tool_id }}"
+            description: {{ tool.description }}
         {% endfor %}
         {% endif %}
-      {% endfor %}
-      {% endif %}
 
-      {{ response_format_prompt }}
-      """
+        {{ response_format_prompt }}
+        """
         
         template = Template(template_str)
         return template.render(
             name=self.name,
             role=self.role,
             permissions=self.permissions,
-            tools=self.tools,
+            toolkit=self.toolkit,
             response_format_prompt=RESPONSE_FORMAT_PROMPT
         )
     

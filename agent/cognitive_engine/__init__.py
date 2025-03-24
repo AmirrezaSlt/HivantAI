@@ -112,16 +112,55 @@ class CognitiveEngine:
                                 yield {"type": "tool", "content": tool_json, "finished": True}
                                 
                                 # Execute the tool
-                                output = toolkit.invoke(tool_name, tool_args)
-                                if isinstance(output, dict):
-                                    output_str = json.dumps(output)
+                                # Check if tool supports streaming
+                                if toolkit.supports_streaming(tool_name):
+                                    # Process streaming output
+                                    logger.debug(f"Executing tool {tool_name} with streaming")
+                                    streaming_count = 0
+                                    final_output = None
+                                    
+                                    for partial_output in toolkit.invoke_stream(tool_name, tool_args):
+                                        streaming_count += 1
+                                        # Format the partial output
+                                        if isinstance(partial_output, dict):
+                                            output_str = json.dumps(partial_output)
+                                        else:
+                                            output_str = str(partial_output)
+                                        
+                                        # Check if this is a finished chunk
+                                        is_finished = False
+                                        if isinstance(partial_output, dict) and partial_output.get("finished", False):
+                                            is_finished = True
+                                            final_output = partial_output
+                                        
+                                        # Yield the partial output with appropriate finished flag
+                                        yield {"type": "tool_response", "content": output_str, "finished": is_finished}
+                                        
+                                        # If this isn't the final chunk, don't add to conversation memory yet
+                                        if not is_finished:
+                                            logger.debug(f"Streamed tool output {streaming_count}: partial result")
+                                    
+                                    # Record the final output in conversation memory
+                                    if final_output:
+                                        if isinstance(final_output, dict):
+                                            final_output_str = json.dumps(final_output)
+                                        else:
+                                            final_output_str = str(final_output)
+                                        
+                                        self.memory.conversation.add_message("system", f"<tool_response>{final_output_str}</tool_response>")
+                                        logger.debug(f"Tool {tool_name} streamed execution completed with {streaming_count} updates")
                                 else:
-                                    output_str = str(output)
-                                
-                                self.memory.conversation.add_message("system", f"<tool_response>{output_str}</tool_response>")
-                                yield {"type": "tool_response", "content": output_str, "finished": True}
-                                
-                                logger.debug(f"Tool {tool_name} executed successfully")
+                                    # Non-streaming tool execution
+                                    output = toolkit.invoke(tool_name, tool_args)
+                                    if isinstance(output, dict):
+                                        output_str = json.dumps(output)
+                                    else:
+                                        output_str = str(output)
+                                    
+                                    self.memory.conversation.add_message("system", f"<tool_response>{output_str}</tool_response>")
+                                    yield {"type": "tool_response", "content": output_str, "finished": True}
+                                    
+                                    logger.debug(f"Tool {tool_name} executed successfully")
                             else:
                                 error_msg = f"Invalid tool format: {data}"
                                 self.memory.conversation.add_message("system", error_msg)
