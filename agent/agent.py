@@ -2,7 +2,8 @@ from .cognitive_engine import CognitiveEngine
 from .retriever import Retriever
 from .toolkit import Toolkit
 from .input import Input
-from typing import Dict, Any, Generator, Optional
+from typing import Dict, Any, Generator
+from agent.memory import Memory
 
 class Agent:
     def __init__(self, toolkit: Toolkit, cognitive_engine: CognitiveEngine, retriever: Retriever):
@@ -18,27 +19,40 @@ class Agent:
         if self.retriever:
             self.retriever.load_data_to_vector_db()
       
-    def respond(self, input: Input, state = None):
+    def respond(self, input: Input, conversation_id: str = None):
         """
         Process input and generate a response using the cognitive engine.
         
         Args:
             input: The input message and any attachments
-            state: Optional state from previous interactions
+            conversation_id: Optional ID to continue a previous conversation
             
         Returns:
             When not streaming: A tuple containing (response_text, updated_state)
             When streaming: A generator yielding response chunks
         """
+        memory = Memory(conversation_id)
+        
+        # Track the user's message in memory (no persistence)
+        memory.add_message("user", input.message)
         
         # Apply buffering to the raw events from the cognitive engine
-        return self.buffer_events(
+        for event in self.buffer_events(
             self.cognitive_engine.respond(
                 input=input,
-                toolkit=self.toolkit,
-                state=state
+                memory=memory,
+                toolkit=self.toolkit
             )
-        )
+        ):
+            # If this is an answer chunk, collect it for memory
+            if event["type"] == "answer":
+                # If this is the final chunk, add to memory (no persistence)
+                if event.get("finished", False):
+                    # External service would handle persistence 
+                    pass
+            
+            # Yield the event to the caller
+            yield event
     
     def start_server(self, host="0.0.0.0", port=8000):
         """
@@ -79,7 +93,7 @@ class Agent:
             finished = event.get("finished", False)
             
             # Tool events are always sent immediately
-            if tag in ["tool", "tool_response", "tool_error"]:
+            if tag in ["tool", "tool_output", "tool_error"]:
                 # If we have a pending buffer, flush it first
                 if delta_buffer:
                     yield {"type": buffer_tag, "content": delta_buffer, "finished": False}

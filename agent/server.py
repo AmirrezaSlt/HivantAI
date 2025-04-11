@@ -1,18 +1,14 @@
-import os
-import sys
-from fastapi import FastAPI, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Union, Tuple
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
 import json
-import asyncio
 from datetime import datetime
 from contextlib import asynccontextmanager
 import uvicorn
 from agent.logger import logger
 
-# Define request models
 class Message(BaseModel):
     role: str
     content: str
@@ -21,11 +17,11 @@ class Message(BaseModel):
 class ChatCompletionRequest(BaseModel):
     messages: List[Message]
     stream: Optional[bool] = False
-    state: Optional[Dict[str, Any]] = None
     attachments: Optional[Dict[str, bytes]] = None
-    show_thinking: Optional[bool] = True  # Add option to show thinking, default to True
-    show_tool_requests: Optional[bool] = True  # Add option to show tool requests, default to True
-    show_tool_responses: Optional[bool] = True  # Add option to show tool responses, default to True
+    show_thinking: Optional[bool] = True
+    show_tool_requests: Optional[bool] = True
+    show_tool_outputs: Optional[bool] = True
+    conversation_id: Optional[str] = None
 
 class ChatCompletionResponseChoice(BaseModel):
     index: int
@@ -52,7 +48,6 @@ class AgentServer:
     def __init__(self, agent):
         """Initialize the server with an agent instance"""
         self.agent = agent
-        self.agent_state = None
         self.app = None
     
     def setup_app(self):
@@ -85,33 +80,35 @@ class AgentServer:
         @app.post("/v1/chat/completions")
         async def chat_completions(
             request: ChatCompletionRequest,
-            agent = Depends(get_agent)
+            agent = Depends(get_agent),
+            conversation_id: Optional[str] = None
         ):
-            # Extract the last user message
+            # Extract all messages to pass to the agent
+            if not request.messages:
+                raise HTTPException(status_code=400, detail="No messages provided")
+            
+            # Get the last user message
             user_messages = [msg for msg in request.messages if msg.role == "user"]
             if not user_messages:
                 raise HTTPException(status_code=400, detail="No user message provided")
             
             user_message = user_messages[-1].content
             
+            # Use conversation_id from query param if provided, otherwise from request body
+            conversation_id = conversation_id or request.conversation_id
+            
             # Create input object with attachments if provided
             from agent.input import Input
             input_obj = Input(message=user_message, attachments=request.attachments)
             
-            # Use provided state or the global state
-            state_to_use = request.state if request.state is not None else self.agent_state
+            # Convert Pydantic messages to dict format for the agent
+            messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
             
             # Handle streaming response
             if request.stream:
                 async def stream_response():
-                    # Generate a response ID and timestamp
-                    response_id = f"chatcmpl-{datetime.now().timestamp()}"
-                    created_time = int(datetime.now().timestamp())
-                    
                     # Start the response with an empty chunk
                     start_chunk = {
-                        "id": response_id,
-                        "created": created_time,
                         "choices": [{
                             "index": 0,
                             "delta": {"role": "assistant"},
@@ -129,7 +126,7 @@ class AgentServer:
                         # Track content for each tag type to handle closing tags properly
                         tag_content = {}
                         
-                        for chunk in agent.respond(input=input_obj):
+                        for chunk in agent.respond(input=input_obj, conversation_id=conversation_id):
                             tag = chunk["type"]
                             content = chunk["content"]
                             finished = chunk.get("finished", False)
@@ -137,7 +134,7 @@ class AgentServer:
                             # Skip chunks the user doesn't want to see
                             if (tag == "thinking" and not request.show_thinking or
                                 tag == "tool" and not request.show_tool_requests or
-                                (tag in ["tool_response", "tool_error"] and not request.show_tool_responses)):
+                                (tag in ["tool_output", "tool_error"] and not request.show_tool_outputs)):
                                 continue
                             
                             # Format the content with appropriate tags
@@ -159,13 +156,13 @@ class AgentServer:
                                     formatted_content += "</thinking>"
                                     tag_content.pop(tag, None)
                             
-                            elif tag in ["tool", "tool_response", "tool_error"]:
+                            elif tag in ["tool", "tool_output", "tool_error"]:
                                 # These can now be partial responses (for streaming tools)
                                 tag_open = f"<{tag}>"
                                 tag_close = f"</{tag}>"
                                 
-                                # For tool_response, handle both streaming and non-streaming cases
-                                if tag == "tool_response":
+                                # For tool_output, handle both streaming and non-streaming cases
+                                if tag == "tool_output":
                                     if tag not in tag_content:
                                         # First chunk of this response
                                         tag_content[tag] = content
@@ -222,8 +219,6 @@ class AgentServer:
                                 
                             # Prepare the delta response chunk
                             delta_chunk = {
-                                "id": response_id,
-                                "created": created_time,
                                 "choices": [{
                                     "index": 0,
                                     "delta": {"content": formatted_content},
@@ -233,15 +228,13 @@ class AgentServer:
                             
                             # Send the chunk
                             yield f"data: {json.dumps(delta_chunk)}\n\n"
-                            
+                        
                         # End the stream with a final done message
                         yield "data: [DONE]\n\n"
                     
                     except Exception as e:
                         logger.error(f"Error in stream_response: {str(e)}")
                         error_chunk = {
-                            "id": response_id,
-                            "created": created_time,
                             "choices": [{
                                 "index": 0,
                                 "delta": {"content": f"\n\nError: {str(e)}"},
@@ -263,30 +256,27 @@ class AgentServer:
             else:
                 # Non-streaming response
                 try:
-                    final_response = ""
+                    # Get the input ready for the agent
+                    if agent.retriever:
+                        agent.retriever.query_and_retrieve(query=input_obj.message)
                     
-                    for chunk in agent.respond(input=input_obj, state=state_to_use):
-                        tag = chunk["type"]
-                        content = chunk["content"]
-                        finished = chunk.get("finished", False)
-                        
-                        if tag == "answer" and finished:
-                            final_response = content
+                    # Get a non-streaming response
+                    response_gen = agent.respond(input=input_obj, conversation_id=conversation_id)
                     
-                    # Generate response ID and timestamp
-                    response_id = f"chatcmpl-{datetime.now().timestamp()}"
-                    created_time = int(datetime.now().timestamp())
+                    # For non-streaming, collect all data and return final response
+                    response_text = ""
+                    for chunk in response_gen:
+                        if chunk["type"] == "answer":
+                            response_text += chunk["content"]
                     
                     # Construct the response
                     return {
-                        "id": response_id,
-                        "created": created_time,
                         "choices": [
                             {
                                 "index": 0,
                                 "message": {
                                     "role": "assistant",
-                                    "content": final_response
+                                    "content": response_text
                                 },
                                 "finish_reason": "stop"
                             }

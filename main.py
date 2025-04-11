@@ -21,7 +21,7 @@ def create_agent():
     cognitive_engine = CognitiveEngine(
         SYSTEM_PROMPT="""
         You are an AI assistant that tries to help the user with their Kubernetes problems. 
-        You already have access to the main kubernetes cluster (dg-cluster) by default so assume that's the cluster you're working with and prefer to get data yourself than asking the user for it if possible. 
+        You already have access to the main kubernetes cluster by default so assume that's the cluster you're working with and prefer to get data yourself than asking the user for it if possible. 
         You can use the code execution tool to run python code that uses the kubernetes client to run kubernetes commands and get the output.
         Try to do incremental steps and get to a good response and feel free to use the tools multiple times, the previous steps taken will be provided to you. 
         Keep your codes small and atomic and try to debug through multiple steps rather than one large block of code.

@@ -6,8 +6,7 @@ from agent.input import Input
 from agent.logger import logger
 from .response_parser import ResponseParser
 from .prompt_template import PromptTemplate
-from .memory import Memory
-
+from agent.memory import Memory
 class CognitiveEngine:
     def __init__(self, *args, **kwargs):
         self.config = CognitiveEngineConfig(*args, **kwargs)
@@ -21,36 +20,38 @@ class CognitiveEngine:
             role=self.role,
             permissions=self.permissions,
         )
-        self.memory = Memory()
         
     def respond(self, 
             input: Input,
             toolkit: Toolkit = None,
-            state = None,
+            memory: Memory = None,
         ):
         """
         Core method that processes user input and produces reasoning events.
         
         Args:
             input: The user input message and attachments
+            messages: List of previous conversation messages with roles and content
             toolkit: Optional toolkit for tool usage
-            state: Optional state from previous interactions
             
         Yields:
             Raw reasoning events to be processed by the agent
         """
         self.prompt_template.set_toolkit(toolkit)
-        self.memory.conversation.add_message("user", input.message)
         
-        # Directly yield events from the reasoning process
-        yield from self._reason(self.prompt_template)
+        current_message = {"role": "user", "content": input.message}
+        
+        all_messages = memory.messages + [current_message]
+        
+        yield from self._reason(self.prompt_template, all_messages)
 
-    def _reason(self, prompt_template: PromptTemplate):
+    def _reason(self, prompt_template: PromptTemplate, messages: List[Dict[str, str]]):
         """
         Core reasoning method that processes LLM responses and handles different response types.
         
         Args:
             prompt_template: The prompt template with the system message.
+            messages: The conversation messages to send to the LLM.
             
         Yields:
             Dict objects with different response types (thinking, answer, tool_usage, tool_error, error).
@@ -60,16 +61,17 @@ class CognitiveEngine:
             count += 1
             logger.debug(f"Starting reasoning iteration {count}")
             
-            messages = [{
+            system_message = {
                 "role": "system",
                 "content": prompt_template.system_prompt,
-            }, *self.memory.conversation.messages]
+            }
+            llm_messages = [system_message] + messages
             
             logger.debug(f"Sending system prompt: {prompt_template.system_prompt}...")
             
             parser = self.response_parser()
             
-            for event in self._get_response(messages, parser):
+            for event in self._get_response(llm_messages, parser):
                 tag = event["type"]
                 data = event["content"]
                 finished = event["finished"]
@@ -80,14 +82,15 @@ class CognitiveEngine:
                     yield {"type": "thinking", "content": data, "finished": finished}
                     
                     if finished:
-                        self.memory.conversation.add_message("assistant", f"[Thinking] {data}")
+                        # Add thinking message to conversation for next iteration
+                        messages.append({"role": "assistant", "content": f"[Thinking] {data}"})
                         logger.debug("Thinking phase complete")
 
                 elif tag == "answer":
                     yield {"type": "answer", "content": data, "finished": finished}
                     
                     if finished:
-                        self.memory.conversation.add_message("assistant", data)
+                        # Return after completed answer
                         logger.debug("Answer complete, returning response")
                         return
                 
@@ -134,20 +137,20 @@ class CognitiveEngine:
                                             final_output = partial_output
                                         
                                         # Yield the partial output with appropriate finished flag
-                                        yield {"type": "tool_response", "content": output_str, "finished": is_finished}
+                                        yield {"type": "tool_output", "content": output_str, "finished": is_finished}
                                         
                                         # If this isn't the final chunk, don't add to conversation memory yet
                                         if not is_finished:
                                             logger.debug(f"Streamed tool output {streaming_count}: partial result")
                                     
-                                    # Record the final output in conversation memory
+                                    # Add the final output to conversation for next iteration
                                     if final_output:
                                         if isinstance(final_output, dict):
                                             final_output_str = json.dumps(final_output)
                                         else:
                                             final_output_str = str(final_output)
                                         
-                                        self.memory.conversation.add_message("system", f"<tool_response>{final_output_str}</tool_response>")
+                                        messages.append({"role": "assistant", "content": f"<tool_output>{final_output_str}</tool_output>"})
                                         logger.debug(f"Tool {tool_name} streamed execution completed with {streaming_count} updates")
                                 else:
                                     # Non-streaming tool execution
@@ -157,24 +160,24 @@ class CognitiveEngine:
                                     else:
                                         output_str = str(output)
                                     
-                                    self.memory.conversation.add_message("system", f"<tool_response>{output_str}</tool_response>")
-                                    yield {"type": "tool_response", "content": output_str, "finished": True}
+                                    messages.append({"role": "assistant", "content": f"<tool_output>{output_str}</tool_output>"})
+                                    yield {"type": "tool_output", "content": output_str, "finished": True}
                                     
                                     logger.debug(f"Tool {tool_name} executed successfully")
                             else:
                                 error_msg = f"Invalid tool format: {data}"
-                                self.memory.conversation.add_message("system", error_msg)
+                                messages.append({"role": "assistant", "content": error_msg})
                                 yield {"type": "tool_error", "content": error_msg, "finished": True}
                                 logger.error(f"Tool execution error: {error_msg}")
                         except Exception as e:
                             tool_name = data["name"] if isinstance(data, dict) and "name" in data else "unknown"
                             error_msg = f"Error using tool {tool_name}: {str(e)}"
-                            self.memory.conversation.add_message("system", error_msg)
+                            messages.append({"role": "assistant", "content": error_msg})
                             yield {"type": "tool_error", "content": error_msg, "finished": True}
                             logger.error(f"Tool execution error: {error_msg}")
                     else:
                         error_msg = "Tool requested but no toolkit available"
-                        self.memory.conversation.add_message("system", error_msg)
+                        messages.append({"role": "assistant", "content": error_msg})
                         yield {"type": "tool_error", "content": error_msg, "finished": True}
                         logger.warning("Tool requested with no toolkit available")
         
