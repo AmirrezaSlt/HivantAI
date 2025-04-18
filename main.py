@@ -8,8 +8,8 @@ from agent.toolkit import Toolkit
 from agent.toolkit.config import PythonCodeExecutorConfig
 
 # Import providers
-# from providers.llm.azure_openai import AzureOpenAILLMProvider
-from providers.llm.bedrock import BedrockLLMProvider
+from providers.llm.azure_openai import AzureOpenAILLMProvider
+# from providers.llm.bedrock import BedrockLLMProvider
 from providers.embeddings.azure_openai import AzureOpenAIEmbeddingProvider
 
 def create_agent():
@@ -27,15 +27,14 @@ def create_agent():
         Try to do incremental steps and get to a good response and feel free to use the tools multiple times, the previous steps taken will be provided to you. 
         Keep your codes small and atomic and try to debug through multiple steps rather than one large block of code.
         """,
-        LLM_PROVIDER=BedrockLLMProvider(
-            model_id="anthropic.claude-3-7-sonnet-20250219-v1:0",
-            region_name=os.getenv("AWS_REGION", "us-east-1")
+        LLM_PROVIDER=AzureOpenAILLMProvider(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            deployment_name="gpt-4o-default"
         ),
-        # Original Azure OpenAI configuration:
-        # LLM_PROVIDER=AzureOpenAILLMProvider(
-        #     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        #     endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        #     deployment_name="gpt-4o-default"
+        # LLM_PROVIDER=BedrockLLMProvider(
+        #     model_id="anthropic.claude-3-7-sonnet-20250219-v1:0",
+        #     region_name=os.getenv("AWS_REGION", "us-east-1")
         # ),
         MAX_ITERATIONS=10,
         AGENT_NAME="Kubernetes Agent",
@@ -68,8 +67,6 @@ def create_agent():
         toolkit=toolkit
     )
     agent.setup()
-    # Uncomment if you want to load vector DB data on startup
-    # agent.load_data_to_vector_db()
     
     return agent
 

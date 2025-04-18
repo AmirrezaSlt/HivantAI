@@ -56,7 +56,8 @@ class Memory:
         self.conversation.add_message(role, content)
         # Note: External service persistence will be handled separately
     
-    def get_messages(self):
+    @property
+    def messages(self):
         """Get all messages in the conversation"""
         return self.conversation.messages
 

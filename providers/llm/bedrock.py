@@ -4,6 +4,7 @@ from typing import Optional, List, Iterator
 from agent.cognitive_engine.llm import BaseLLMProvider
 import json
 import time
+from botocore.exceptions import ClientError
 
 class BedrockLLMProvider(BaseLLMProvider):
     supports_streaming = True
@@ -59,8 +60,8 @@ class BedrockLLMProvider(BaseLLMProvider):
                 response_body = json.loads(response['body'].read().decode('utf-8'))
                 return response_body['content'][0]['text']
                 
-            except self.client.exceptions.ServiceException as e:
-                if "ThrottlingException" in str(e) and attempt < max_retries - 1:
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ThrottlingException' and attempt < max_retries - 1:
                     logging.warning(f"Rate limited by Bedrock (attempt {attempt+1}/{max_retries}). Retrying in {retry_delay} seconds.")
                     time.sleep(retry_delay)
                     retry_delay *= 2  # exponential backoff
@@ -107,8 +108,8 @@ class BedrockLLMProvider(BaseLLMProvider):
                 # If we reach here, we have a successful response
                 break
                 
-            except self.client.exceptions.ServiceException as e:
-                if "ThrottlingException" in str(e) and attempt < max_retries - 1:
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ThrottlingException' and attempt < max_retries - 1:
                     logging.warning(f"Rate limited by Bedrock (attempt {attempt+1}/{max_retries}). Retrying in {retry_delay} seconds.")
                     time.sleep(retry_delay)
                     retry_delay *= 2  # exponential backoff

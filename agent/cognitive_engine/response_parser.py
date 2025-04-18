@@ -14,12 +14,13 @@ Your response MUST be formatted with specific tags for proper processing:
    <tool>
    {
      "name": "tool_name",
-     "args": {
+     "input": {
        "param1": "value1",
        "param2": "value2"
      }
    }
    </tool>
+   The tool will be executed immediately after the <tool> tag is seen and the output will be provided back to you.
 
 3. FINAL ANSWER: Always end with a clear answer.
    <answer>
@@ -139,15 +140,15 @@ class ResponseParser:
                         if content.startswith('{') and content.endswith('}'):
                             tool_data = json.loads(content)
                             # Convert args to a properly formatted JSON string if it's not already
-                            if "args" in tool_data and not isinstance(tool_data["args"], str):
-                                tool_data["args"] = json.dumps(tool_data["args"])
+                            if "input" in tool_data and not isinstance(tool_data["input"], str):
+                                tool_data["input"] = json.dumps(tool_data["input"])
                         else:
                             # Handle case where content might be a Python dict-like string
                             # Convert Python syntax to JSON syntax
                             content = content.replace("'", "\"")
                             tool_data = json.loads(content)
-                            if "args" in tool_data and not isinstance(tool_data["args"], str):
-                                tool_data["args"] = json.dumps(tool_data["args"])
+                            if "input" in tool_data and not isinstance(tool_data["input"], str):
+                                tool_data["input"] = json.dumps(tool_data["input"])
                         
                         event = {"type": "tool", "content": tool_data, "finished": True}
                     except json.JSONDecodeError:

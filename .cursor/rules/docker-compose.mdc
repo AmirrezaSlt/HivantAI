@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+- Use docker-compose to run the code or execute anything you need
+- Do not install stuff or run major code on the computer

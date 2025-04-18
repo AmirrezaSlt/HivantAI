@@ -14,5 +14,6 @@ services:
       - ./providers:/llm/providers
       - ./main.py:/llm/main.py
       - ~/.kube/config:/root/.kube/config
+      - ~/.aws:/root/.aws
       - ./data/logs:/var/log/agent
 

@@ -98,21 +98,17 @@ class CognitiveEngine:
                     toolkit = prompt_template.toolkit
                     if toolkit:
                         try:
-                            if isinstance(data, dict) and "name" in data and "args" in data:
+                            if isinstance(data, dict) and "name" in data and ("args" in data or "input" in data):
                                 tool_name = data["name"]
-                                tool_args = data["args"]
+                                tool_input = data["input"]
                                 try:
-                                    # If tool_args is a string that looks like JSON, parse it
-                                    if isinstance(tool_args, str):
-                                        if tool_args.strip().startswith('{') and tool_args.strip().endswith('}'):
-                                            tool_args = json.loads(tool_args)
+                                    # If tool_input is a string that looks like JSON, parse it
+                                    if isinstance(tool_input, str):
+                                        if tool_input.strip().startswith('{') and tool_input.strip().endswith('}'):
+                                            tool_input = json.loads(tool_input)
                                     # If it's already a dict, use it directly
                                 except json.JSONDecodeError:
                                     raise ValueError(f"Invalid tool format: {data}")
-                                
-                                # Prepare the tool request with full JSON content for <tool> tag
-                                tool_json = json.dumps({"name": tool_name, "args": tool_args})
-                                yield {"type": "tool", "content": tool_json, "finished": True}
                                 
                                 # Execute the tool
                                 # Check if tool supports streaming
@@ -122,7 +118,7 @@ class CognitiveEngine:
                                     streaming_count = 0
                                     final_output = None
                                     
-                                    for partial_output in toolkit.invoke_stream(tool_name, tool_args):
+                                    for partial_output in toolkit.invoke_stream(tool_name, tool_input):
                                         streaming_count += 1
                                         # Format the partial output
                                         if isinstance(partial_output, dict):
@@ -136,8 +132,16 @@ class CognitiveEngine:
                                             is_finished = True
                                             final_output = partial_output
                                         
-                                        # Yield the partial output with appropriate finished flag
-                                        yield {"type": "tool_output", "content": output_str, "finished": is_finished}
+                                        # Create tool result with output included
+                                        tool_with_output = {
+                                            "name": tool_name,
+                                            "input": tool_input,
+                                            "output": partial_output
+                                        }
+                                        tool_json = json.dumps(tool_with_output)
+                                        
+                                        # Yield the tool with output
+                                        yield {"type": "tool", "content": tool_json, "finished": is_finished}
                                         
                                         # If this isn't the final chunk, don't add to conversation memory yet
                                         if not is_finished:
@@ -145,23 +149,29 @@ class CognitiveEngine:
                                     
                                     # Add the final output to conversation for next iteration
                                     if final_output:
-                                        if isinstance(final_output, dict):
-                                            final_output_str = json.dumps(final_output)
-                                        else:
-                                            final_output_str = str(final_output)
+                                        tool_with_output = {
+                                            "name": tool_name,
+                                            "input": tool_input,
+                                            "output": final_output
+                                        }
+                                        tool_output_str = json.dumps(tool_with_output)
                                         
-                                        messages.append({"role": "assistant", "content": f"<tool_output>{final_output_str}</tool_output>"})
+                                        messages.append({"role": "assistant", "content": f"<tool>{tool_output_str}</tool>"})
                                         logger.debug(f"Tool {tool_name} streamed execution completed with {streaming_count} updates")
                                 else:
                                     # Non-streaming tool execution
-                                    output = toolkit.invoke(tool_name, tool_args)
-                                    if isinstance(output, dict):
-                                        output_str = json.dumps(output)
-                                    else:
-                                        output_str = str(output)
+                                    output = toolkit.invoke(tool_name, tool_input)
                                     
-                                    messages.append({"role": "assistant", "content": f"<tool_output>{output_str}</tool_output>"})
-                                    yield {"type": "tool_output", "content": output_str, "finished": True}
+                                    # Create tool result with output included
+                                    tool_with_output = {
+                                        "name": tool_name,
+                                        "input": tool_input,
+                                        "output": output
+                                    }
+                                    tool_output_str = json.dumps(tool_with_output)
+                                    
+                                    messages.append({"role": "assistant", "content": f"<tool>{tool_output_str}</tool>"})
+                                    yield {"type": "tool", "content": tool_output_str, "finished": True}
                                     
                                     logger.debug(f"Tool {tool_name} executed successfully")
                             else:
